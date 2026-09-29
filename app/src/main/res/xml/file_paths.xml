@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<paths>
+
+    <external-path
+        name="external_files"
+        path="."/>
+
+    <external-files-path
+        name="app_external"
+        path="."/>
+
+    <cache-path
+        name="cache"
+        path="."/>
+
+    <!-- OTA updater: downloaded release APKs are written to
+         context.filesDir/updates and shared with the system
+         Package Installer through this provider. Without this
+         entry FileProvider.getUriForFile() throws. -->
+    <files-path
+        name="updates"
+        path="updates/"/>
+
+</paths>

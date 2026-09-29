@@ -1,0 +1,62 @@
+# ============================================================
+# Gradle / Android build output
+# ============================================================
+.gradle/
+build/
+app/build/
+local.properties
+.kotlin/
+captures/
+.cxx/
+*.hprof
+
+# ============================================================
+# Signing material — NEVER COMMIT
+# Release signing secrets live outside the repository
+# (D:\VEGA\.keys\) and passwords in ~/.gradle/gradle.properties.
+# ============================================================
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# ============================================================
+# Build artifacts — published as GitHub Release assets,
+# not tracked in git.
+# ============================================================
+*.apk
+*.aab
+*.ap_
+output-metadata.json
+
+# ============================================================
+# IDE
+# ============================================================
+.idea/
+*.iml
+.vscode/
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Secrets — never commit, even if created inside the repo
+# ============================================================
+.env
+.env.*
+!.env.example
+.github-manager/
+
+# ============================================================
+# Local device dumps / tooling leftovers
+# ============================================================
+camera_logcat.txt
+camera_info.txt
+VEGA-STING.md
+graphify-out/
+*.cdr
+hs_err_pid*.log
+replay_*.log
+script-copier.py

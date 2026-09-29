@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">VEGA STING</string>
+    <string name="shortcut_toggle_short">Toggle REC</string>
+    <string name="shortcut_toggle_long">Start/Stop AV Recording</string>
+
+    <!-- In-app OTA updater -->
+    <string name="update_available_title">Update Available</string>
+    <string name="update_up_to_date_title">You\'re Up To Date</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_check_failed_title">Check Failed</string>
+    <string name="update_check_failed">Couldn\'t reach GitHub. Check your connection.</string>
+    <string name="update_downloading">Downloading… %1$d%%</string>
+    <string name="update_downloading_unknown">Downloading… %1$s</string>
+    <string name="update_install_title">Install Update</string>
+    <string name="update_install_body">Download complete. The system installer will open next. Your recordings are not touched.</string>
+    <string name="update_allow_install_title">Permission Required</string>
+    <string name="update_allow_install_body">Android needs your permission before it can install the update. We\'ll take you to the settings screen — enable “Allow from this source”, then come back and tap Update again.</string>
+    <string name="update_open_settings">Open Settings</string>
+    <string name="update_install_now">Install Now</string>
+    <string name="update_later">Later</string>
+    <string name="update_skip">Skip This Version</string>
+    <string name="update_close">Close</string>
+    <string name="update_download_error">Download failed: %1$s</string>
+    <string name="update_unable_to_install">Android blocked the install. Enable “Install unknown apps” for VEGA STING in Settings, then try again.</string>
+    <string name="update_notes_label">What\'s new</string>
+    <string name="update_blocked_recording">Update check paused while recording</string>
+</resources>

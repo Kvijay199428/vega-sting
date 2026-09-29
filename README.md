@@ -12,9 +12,12 @@ Kotlin, Jetpack Compose and CameraX.
 | `app/src/main/kotlin/com/vega/sting/database/` | Room database for recordings, metadata and trash |
 | `app/src/main/kotlin/com/vega/sting/storage/` | Storage backends (internal, SD card, OTG) and health checks |
 | `app/src/main/kotlin/com/vega/sting/settings/SettingsManager.kt` | DataStore-backed preferences |
+| `app/src/main/kotlin/com/vega/sting/legal/` | Consent model, versioned DataStore persistence, bundled document metadata |
+| `app/src/main/kotlin/com/vega/sting/ui/legal/` | First-run consent gate and offline document reader |
 | `app/src/main/kotlin/com/vega/sting/ui/settings/SettingsScreen.kt` | Settings screen |
 | `app/src/main/kotlin/com/vega/sting/ui/update/` | OTA dialogs and the update state host |
 | `app/src/main/kotlin/com/vega/sting/updater/` | GitHub release check, APK download, installer handoff |
+| `app/src/test/kotlin/com/vega/sting/legal/` | Consent completeness and version-regression tests |
 | `app/src/test/kotlin/com/vega/sting/updater/` | OTA version-comparison and release-parsing tests |
 
 ## Building
@@ -105,11 +108,40 @@ at the install prompt once the toggle is enabled.
 
 1. Bump `versionCode` / `versionName` in `app/build.gradle.kts`.
 2. Build and verify the release APK.
-3. Commit, tag and push, then create a GitHub release whose tag is the version
-   name and whose first `.apk` asset is `app-release.apk`.
+3. Commit and push, create an **annotated** tag named `v<versionName>`
+   (for example `v1.0.2`), and push the tag.
+4. Create a GitHub release whose tag is that `v`-prefixed tag and whose first
+   `.apk` asset is `app-release.apk`. Record the version name and tag
+   explicitly in the release notes.
+5. Confirm the release is neither a draft nor a pre-release. The `latest`
+   endpoint ignores both, so users would never see the build.
 
 A release marked as a pre-release or draft is not returned by the `latest`
 endpoint, so users never see an unfinished build.
+
+## Legal consent and privacy
+
+On first run the app shows a mandatory consent screen and stores nothing else
+until it is accepted. No permission is requested, no recording UI is reachable and
+no network request is made before acceptance.
+
+- Acceptance is recorded atomically in the shared `settings` DataStore with
+  `terms_accepted`, `privacy_policy_acknowledged`, `terms_version`,
+  `privacy_policy_version` and `accepted_at`
+- Both acknowledgements are required and neither checkbox starts pre-checked
+- Bumping either document version re-collects consent on the next launch
+- The full text of both documents is bundled in `res/raw` and readable offline,
+  and permanently available from Settings → **Legal**
+
+Canonical documents:
+
+- [Privacy Policy](https://github.com/Kvijay199428/VEGA-STING/blob/main/PRIVACY_POLICY.md)
+- [Terms & Conditions](https://github.com/Kvijay199428/VEGA-STING/blob/main/TERMS_AND_CONDITIONS.md)
+
+In short: recordings stay on your device. The app has no account system, no
+analytics, no ads and no third-party SDKs, and the developer never receives your
+data. The only network access is the optional update check, which is not even
+performed until after consent.
 
 ## Permissions
 
@@ -127,7 +159,8 @@ endpoint, so users never see an unfinished build.
 .\gradlew.bat :app:testDebugUnitTest
 ```
 
-The OTA tests cover version comparison (`1.10.0` > `1.9.0`, `v` prefixes, missing
-segments, invalid input) and release-JSON parsing (APK selection, missing fields,
-explicit JSON nulls, malformed input). These are the parts most likely to break
-OTA updates silently.
+The unit tests cover OTA version comparison (`1.10.0` > `1.9.0`, `v` prefixes,
+missing segments, invalid input), release-JSON parsing (APK selection, missing
+fields, explicit JSON nulls, malformed input) and legal consent completeness
+(half-acceptance, version mismatch, re-consent triggers). These are the parts most
+likely to break OTA updates and consent enforcement silently.

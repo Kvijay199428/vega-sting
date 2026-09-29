@@ -24,4 +24,17 @@
     <string name="update_unable_to_install">Android blocked the install. Enable “Install unknown apps” for VEGA STING in Settings, then try again.</string>
     <string name="update_notes_label">What\'s new</string>
     <string name="update_blocked_recording">Update check paused while recording</string>
+
+    <!-- Legal consent -->
+    <string name="legal_welcome_title">Before you continue</string>
+    <string name="legal_welcome_body">VEGA STING records audio and video on this device only. Nothing is uploaded, and the developer never receives your recordings. Network access is used solely to check for updates. Read both documents below and accept to continue. Until you accept, no permission is requested and no recording feature is available.</string>
+    <string name="legal_accept_terms">I agree to the Terms &amp; Conditions</string>
+    <string name="legal_ack_privacy">I have read and acknowledge the Privacy Policy</string>
+    <string name="legal_documents_label">DOCUMENTS</string>
+    <string name="legal_accept_continue">Accept &amp; Continue</string>
+    <string name="legal_exit">Exit / Don\'t Accept</string>
+    <string name="legal_terms_title">Terms &amp; Conditions</string>
+    <string name="legal_privacy_title">Privacy Policy</string>
+    <string name="legal_close">Close</string>
+    <string name="legal_loading">LOADING…</string>
 </resources>

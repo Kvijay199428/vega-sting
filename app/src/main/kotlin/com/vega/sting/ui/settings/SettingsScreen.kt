@@ -13,9 +13,11 @@ import androidx.compose.ui.unit.dp
 import android.widget.Toast
 import com.vega.sting.core.RecordingState
 import com.vega.sting.core.RecordingStateManager
+import com.vega.sting.legal.LegalDocument
 import com.vega.sting.overlay.OverlayPosition
 import com.vega.sting.settings.SettingsManager
 import com.vega.sting.ui.components.TerminalButton
+import com.vega.sting.ui.legal.LegalDocumentDialog
 import com.vega.sting.storage.StorageHealthManager
 import com.vega.sting.storage.StorageManager
 import com.vega.sting.storage.StorageType
@@ -32,6 +34,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settingsManager = remember { SettingsManager(context) }
+    var openLegalDocument by remember { mutableStateOf<LegalDocument?>(null) }
     
 val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     val videoSize by settingsManager.resolution.collectAsState(initial = "AUTO")
@@ -203,6 +206,16 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             SettingsItem(label = "QUICK TILE", value = "ENABLED")
         }
 
+        SettingsSection(title = "LEGAL") {
+            LegalDocument.entries.forEach { document ->
+                SettingsItem(
+                    label = context.getString(document.titleRes),
+                    value = "READ",
+                    onClick = { openLegalDocument = document }
+                )
+            }
+        }
+
         SettingsSection(title = "ABOUT") {
             SettingsItem(label = "VERSION", value = com.vega.sting.BuildConfig.VERSION_NAME)
             SettingsItem(label = "BUILD", value = com.vega.sting.BuildConfig.VERSION_CODE.toString())
@@ -223,6 +236,10 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             TerminalButton(text = "DONE", onClick = onBack, modifier = Modifier.weight(1f))
         }
+    }
+
+    openLegalDocument?.let { document ->
+        LegalDocumentDialog(document = document, onDismiss = { openLegalDocument = null })
     }
 }
 

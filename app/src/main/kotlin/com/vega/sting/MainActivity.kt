@@ -30,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,10 +39,12 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vega.sting.core.RecordingState
 import com.vega.sting.core.RecordingStateManager
+import com.vega.sting.legal.LegalConsentStore
 import com.vega.sting.services.RecordingService
 import com.vega.sting.services.ServiceUtils
 import com.vega.sting.ui.components.StatusPanel
 import com.vega.sting.ui.components.TerminalButton
+import com.vega.sting.ui.legal.WelcomeConsentScreen
 import com.vega.sting.ui.settings.SettingsScreen
 import com.vega.sting.ui.trash.TrashScreen
 import com.vega.sting.ui.update.UpdateHost
@@ -76,7 +80,42 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainContent(viewModel: RecordingViewModel = viewModel()) {
+fun MainContent() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val consentStore = remember { LegalConsentStore(context) }
+    val consent by consentStore.consent.collectAsState(initial = null)
+
+    when {
+        // Nothing below the gate may mount before consent: no permission prompts,
+        // no ViewModel, no OTA network call.
+        consent == null -> ConsentLoadingScreen()
+        !consent!!.isComplete -> WelcomeConsentScreen(
+            onAccept = { scope.launch { consentStore.accept() } }
+        )
+        else -> AcceptedAppContent()
+    }
+}
+
+@Composable
+private fun ConsentLoadingScreen() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Background),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = stringResource(R.string.legal_loading),
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextSecondary,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+}
+
+@Composable
+private fun AcceptedAppContent(viewModel: RecordingViewModel = viewModel()) {
     var currentScreen by remember { mutableStateOf("home") }
     var selectedPlaybackRecording by remember { mutableStateOf<com.vega.sting.database.Recording?>(null) }
 

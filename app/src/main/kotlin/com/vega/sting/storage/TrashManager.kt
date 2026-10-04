@@ -1,10 +1,11 @@
 package com.vega.sting.storage
 
 import android.content.Context
+import android.util.Log
 import java.io.File
 
 object TrashManager {
-
+    private const val TAG = "TrashManager"
     private const val TRASH_DIR = ".trash"
 
     fun getTrashDirectory(
@@ -40,7 +41,7 @@ object TrashManager {
             sourceFile.delete()
             trashFile
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w(TAG, "moveToTrash failed for ${sourceFile.path}: ${e.message}")
             null
         }
     }
@@ -62,15 +63,24 @@ object TrashManager {
             trashFile.delete()
             restored
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w(TAG, "restoreFromTrash failed for ${trashFile.path}: ${e.message}")
             null
         }
     }
 
     fun permanentlyDelete(file: File): Boolean {
         return try {
-            file.delete()
+            if (!file.exists()) {
+                // File already gone — the row can be cleaned up.
+                Log.w(TAG, "permanentlyDelete: already missing ${file.path}")
+                true
+            } else {
+                val ok = file.delete()
+                if (!ok) Log.w(TAG, "permanentlyDelete: delete() returned false for ${file.path}")
+                ok
+            }
         } catch (e: Exception) {
+            Log.w(TAG, "permanentlyDelete failed for ${file.path}: ${e.message}")
             false
         }
     }

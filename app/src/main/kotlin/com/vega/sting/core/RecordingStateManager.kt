@@ -96,4 +96,9 @@ object RecordingStateManager {
                s == RecordingState.SWITCHING_TO_VIDEO ||
                s == RecordingState.SWITCHING_TO_AUDIO
     }
+
+    
+    fun isBusy(state: RecordingState = _state.value): Boolean {
+        return state != RecordingState.IDLE && state != RecordingState.ERROR
+    }
 }

@@ -73,6 +73,11 @@ class SettingsManager(private val context: Context) {
         context.dataStore.edit { it[SIGNATURE_POSITION] = position }
     }
 
+    suspend fun updateSignature(text: String) {
+        context.dataStore.edit { it[SIGNATURE] = text }
+    }
+
+
     suspend fun updateTimestampFormat(format: String) {
         context.dataStore.edit { it[TIMESTAMP_FORMAT] = format }
     }

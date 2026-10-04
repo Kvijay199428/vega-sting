@@ -3,7 +3,7 @@
     <shortcut
         android:shortcutId="toggle_recording"
         android:enabled="true"
-        android:icon="@android:drawable/ic_menu_camera"
+        android:icon="@drawable/ic_shortcut_record"
         android:shortcutShortLabel="@string/shortcut_toggle_short"
         android:shortcutLongLabel="@string/shortcut_toggle_long">
         <intent

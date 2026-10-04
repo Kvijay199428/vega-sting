@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand palette derived from the icons (.assets/dark) -->
+    <color name="brand_red">#A40000</color>
+    <color name="brand_gray">#A49D95</color>
+    <color name="brand_black">#000000</color>
+
+    <!-- Splash screen background. Currently black to match the app UI.
+         Change this to a light value only when a high-contrast light splash
+         artwork is provided (the gray monogram is unreadable on white). -->
+    <color name="splash_background">#000000</color>
+</resources>

@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [Recording::class, CameraSessionTelemetry::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -45,6 +45,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration from v2 → v3: adds trash-retention and real-resolution columns
+         * to `recordings`.
+         *
+         * `deletedAt` is nullable because it is only meaningful for trashed rows;
+         * existing rows are backfilled with NULL, which the retention query treats
+         * as "not yet deleted". `width`/`height` are NOT NULL DEFAULT 0 so that
+         * pre-existing rows and audio recordings have a defined unknown value
+         * (0) rather than NULL, matching the Kotlin entity defaults.
+         *
+         * The declared column order does not matter to Room, which matches
+         * columns by name, so a plain ALTER is sufficient here.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recordings ADD COLUMN deletedAt INTEGER")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN width INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN height INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -52,7 +73,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "vega_sting_database"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                 INSTANCE = instance
                 instance

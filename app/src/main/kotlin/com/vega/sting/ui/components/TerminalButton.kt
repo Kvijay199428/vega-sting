@@ -2,6 +2,7 @@ package com.vega.sting.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -24,25 +25,28 @@ fun TerminalButton(
     contentColor: Color = if (isStopMode) Error else AccentOrange
 ) {
     val borderColor = if (isStopMode) Error else AccentOrange
+    val resolvedContentColor = if (enabled) contentColor else Color.Gray
     
     Button(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.heightIn(min = 48.dp),
         enabled = enabled,
         shape = RoundedCornerShape(4.dp),
         border = BorderStroke(1.dp, borderColor),
         colors = ButtonDefaults.buttonColors(
             containerColor = containerColor,
-            contentColor = contentColor,
+            contentColor = resolvedContentColor,
             disabledContainerColor = Background,
             disabledContentColor = Color.Gray
         ),
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
     ) {
+        
+        
+        
         Text(
             text = text.uppercase(),
-            style = MaterialTheme.typography.labelLarge,
-            color = contentColor
+            style = MaterialTheme.typography.labelLarge
         )
     }
 }

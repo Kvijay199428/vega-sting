@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.vega.sting.database.Recording
 import com.vega.sting.database.RecordingType
-import com.vega.sting.ui.components.TerminalButton
+import com.vega.sting.ui.components.DetailHeaderBar
 import com.vega.sting.ui.theme.*
 import java.io.File
 
@@ -30,11 +30,16 @@ fun PlaybackScreen(recording: Recording, onBack: () -> Unit) {
             .safeDrawingPadding()
             .padding(16.dp)
     ) {
-        Text(
-            text = "PLAYBACK: ${recording.name}",
-            style = MaterialTheme.typography.headlineMedium,
-            color = AccentYellow,
-            modifier = Modifier.padding(bottom = 16.dp)
+        DetailHeaderBar(
+            title = recording.name,
+            onBack = onBack,
+            trailing = {
+                Text(
+                    text = "PLAYBACK",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AccentYellow
+                )
+            }
         )
 
         Box(
@@ -54,12 +59,6 @@ fun PlaybackScreen(recording: Recording, onBack: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
-        TerminalButton(
-            text = "CLOSE PLAYBACK",
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }
 

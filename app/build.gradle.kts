@@ -4,13 +4,13 @@ plugins {
     id("kotlin-kapt")
 }
 
-// ============================================================
-// RELEASE SIGNING
-// Credentials are read from ~/.gradle/gradle.properties (or -P
-// flags) and are intentionally never stored in this repository.
-// The keystore itself lives outside the working tree so it can
-// never be committed by accident.
-// ============================================================
+
+
+
+
+
+
+
 val releaseStorePath = providers.gradleProperty("VEGA_STING_STORE_FILE").orNull
 val releaseStorePass = providers.gradleProperty("VEGA_STING_STORE_PASSWORD").orNull
 val releaseKeyAlias = providers.gradleProperty("VEGA_STING_KEY_ALIAS").orNull
@@ -28,13 +28,16 @@ android {
         applicationId = "com.vega.sting"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
-        // GitHub repository queried by the in-app OTA updater.
-        // Must stay in sync with the "owner/repo" of the GitHub Release.
+        
+        
         buildConfigField("String", "GITHUB_OWNER", "\"Kvijay199428\"")
         buildConfigField("String", "GITHUB_REPO", "\"VEGA-STING\"")
+        buildConfigField("String", "GITHUB_REPO_URL", "\"https://github.com/Kvijay199428/VEGA-STING\"")
+        buildConfigField("String", "DEV_NAME", "\"vijay kumar sharma\"")
+        buildConfigField("String", "DEV_WEBSITE", "\"https://app.vijaykrsha.online\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -81,13 +84,24 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    applicationVariants.all {
+        if (name == "release") {
+            outputs.all {
+                (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
+                    "vega-sting-${versionName}.apk"
+            }
+        }
+    }
 }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation(platform("androidx.compose:compose-bom:2024.02.00"))
     implementation("androidx.compose.ui:ui")
@@ -95,10 +109,10 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
 
-    // DataStore
+    
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
-    // CameraX
+    
     val camerax_version = "1.3.1"
     implementation("androidx.camera:camera-core:${camerax_version}")
     implementation("androidx.camera:camera-camera2:${camerax_version}")
@@ -107,13 +121,16 @@ dependencies {
     implementation("androidx.camera:camera-view:${camerax_version}")
     implementation("androidx.camera:camera-extensions:${camerax_version}")
 
-    // Room
+    
     val room_version = "2.6.1"
     implementation("androidx.room:room-runtime:${room_version}")
     implementation("androidx.room:room-ktx:${room_version}")
     kapt("androidx.room:room-compiler:${room_version}")
 
-    // Gson for DeviceProfile JSON serialization
+    
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    
     implementation("com.google.code.gson:gson:2.10.1")
 
     testImplementation("junit:junit:4.13.2")
@@ -125,11 +142,11 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
-// ============================================================
-// Fail fast instead of silently producing an UNSIGNED APK.
-// An unsigned APK cannot be installed, and would silently break
-// the in-app OTA updater for every future release.
-// ============================================================
+
+
+
+
+
 val verifyReleaseSigning by tasks.registering {
     group = "verification"
     description = "Fails if release signing credentials are missing."

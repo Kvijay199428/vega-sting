@@ -11,36 +11,46 @@ import java.util.concurrent.TimeUnit
 
 object TrashRetentionManager {
     private const val TAG = "TrashRetentionManager"
-    private val RETENTION_PERIOD_MS = TimeUnit.DAYS.toMillis(30) // 30 days
+    val RETENTION_PERIOD_MS: Long = TimeUnit.DAYS.toMillis(30)
 
-    suspend fun cleanupOldTrash(context: Context) = withContext(Dispatchers.IO) {
+    
+    fun isExpired(deletedAt: Long, now: Long): Boolean {
+        return deletedAt <= now - RETENTION_PERIOD_MS
+    }
+
+    
+    fun computeCutoff(now: Long = System.currentTimeMillis()): Long {
+        return now - RETENTION_PERIOD_MS
+    }
+
+    
+    suspend fun cleanupOldTrash(context: Context): Int = withContext(Dispatchers.IO) {
         try {
             val database = AppDatabase.getDatabase(context)
             val dao = database.recordingDao()
             val repository = RecordingRepository(context, dao)
 
-            // Calculate cutoff time
-            val cutoffTime = System.currentTimeMillis() - RETENTION_PERIOD_MS
+            val cutoffTime = computeCutoff()
+            val expired = dao.getTrashDeletedBefore(cutoffTime)
 
-            // Get all deleted recordings
-            val deletedRecordings = dao.getTrashRecordingsSync()
-            
             var deletedCount = 0
-            
-            for (recording in deletedRecordings) {
-                // If the recording was deleted more than 30 days ago...
-                // Currently, we don't store the exact deletion time, but we can check the 
-                // file's last modified time if it's in the .trash directory.
+            for (recording in expired) {
                 val file = File(recording.path)
-                if (file.exists() && file.lastModified() < cutoffTime) {
+                if (!file.exists()) {
+                    
+                    dao.delete(recording)
+                    deletedCount++
+                } else {
                     repository.permanentlyDeleteRecording(recording)
                     deletedCount++
                 }
             }
-            
+
             Log.d(TAG, "Cleaned up $deletedCount old items from trash.")
+            deletedCount
         } catch (e: Exception) {
             Log.e(TAG, "Error cleaning up old trash: ${e.message}", e)
+            0
         }
     }
 }

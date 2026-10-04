@@ -18,16 +18,35 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.util.Log
 import com.vega.sting.repository.RecordingRepository
+import android.widget.Toast
 
 class RecordingViewModel(application: Application) : AndroidViewModel(application) {
+    companion object { private const val TAG = "RecordingViewModel" }
+
     private val recordingDao: RecordingDao = AppDatabase.getDatabase(application).recordingDao()
     private val repository = RecordingRepository(application, recordingDao)
     val allRecordings: Flow<List<Recording>> = recordingDao.getAllActiveRecordings()
     val trashRecordings: Flow<List<Recording>> = recordingDao.getTrashRecordings()
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
+            reconcileMissingActiveRows()
             com.vega.sting.storage.TrashRetentionManager.cleanupOldTrash(application)
+        }
+        com.vega.sting.storage.TrashRetentionWorker.schedule(application)
+    }
+
+    private suspend fun reconcileMissingActiveRows() {
+        try {
+            val actives = recordingDao.getActiveRecordingsSync()
+            actives.forEach { rec ->
+                if (!File(rec.path).exists()) {
+                    Log.w(TAG, "reconcile: removing ghost row id=${rec.id} path=${rec.path}")
+                    recordingDao.delete(rec)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "reconcile failed", e)
         }
     }
 
@@ -60,9 +79,26 @@ class RecordingViewModel(application: Application) : AndroidViewModel(applicatio
         recordingDao.insert(recording)
     }
 
-    fun softDelete(id: Int) = viewModelScope.launch {
-        recordingDao.getById(id)?.let {
-            repository.softDeleteRecording(it)
+    fun softDeleteAll(ids: Set<Int>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            var failed = 0
+            ids.forEach { id ->
+                val rec = recordingDao.getById(id)
+                if (rec != null) {
+                    val ok = repository.softDeleteRecording(rec)
+                    if (!ok) failed++
+                }
+            }
+            if (failed > 0) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        getApplication(),
+                        "$failed recording(s) could not be deleted",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
     }
 

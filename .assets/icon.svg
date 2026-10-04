@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Creator: CorelDRAW 2021 (64-Bit) -->
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="11.8069in" height="11.8069in" version="1.1" style="shape-rendering:geometricPrecision; text-rendering:geometricPrecision; image-rendering:optimizeQuality; fill-rule:evenodd; clip-rule:evenodd"
+viewBox="0 0 818.88 818.88"
+ xmlns:xlink="http://www.w3.org/1999/xlink"
+ xmlns:xodm="http://www.corel.com/coreldraw/odm/2003">
+ <defs>
+  <font id="FontID0" horiz-adv-x="668" font-variant="normal" style="fill-rule:nonzero" font-weight="700">
+	<font-face 
+		font-family="Dubai">
+		<font-face-src>
+			<font-face-name name="Dubai Bold"/>
+		</font-face-src>
+	</font-face>
+   <missing-glyph><path d="M0 0z"/></missing-glyph>
+   <glyph unicode="S" horiz-adv-x="565" d="M274 -13.9995c-100,0 -185,25.9997 -255,77.9992l63.9997 99.0001c61.9993,-39.3328 122.667,-58.9998 182,-58.9998 37.9999,0 67.8325,6.00011 89.4999,18.0003 21.6663,11.9991 32.4994,29.9994 32.4994,53.9999 0,14.6659 -3.50016,26.833 -10.4993,36.5002 -7.00032,9.66603 -19.3343,18.9994 -37.0009,27.999 -17.6666,9.00073 -44.1658,20.5003 -79.5001,34.5009l-22.9991 8.9996c-42.6672,16.6663 -77.0001,32.6663 -103.001,47.9998 -25.9997,15.3335 -46.6658,35.0005 -61.9993,58.9998 -15.3335,24.0004 -23.0002,54.3336 -23.0002,91.0007 0,40.6668 11.6664,74.5002 35.0005,101.5 23.3329,26.9999 53.3334,46.8327 89.9994,59.4993 36.6671,12.6666 75.6672,19.0005 117,19.0005 37.3335,0 75.833,-6.167 115.5,-18.4999 39.6666,-12.334 77.4996,-30.5001 113.5,-54.5005l-64.6672 -97.9999c-31.6661,19.3332 -59.8331,33.3338 -84.5,41.9996 -24.5,8.66695 -50.9992,13.0004 -79.5001,13.0004 -31.6661,0 -55.6665,-5.33368 -71.9991,-15.9999 -16.1668,-10.6662 -24.3342,-24.9995 -24.3342,-42.9999 0,-11.3338 3.33327,-21.5005 9.99981,-30.5001 6.50078,-8.9996 18.501,-18.0003 35.6669,-26.9999 17.3339,-8.9996 42.1665,-19.5001 74.667,-31.5003l21.8331 -7.9994c42.3334,-15.9999 76.6663,-31.0008 102.833,-45.0003 26.1677,-14.0006 48.3335,-34.0003 66.167,-60 17.8334,-25.9997 26.833,-59.6673 26.833,-101.001 0,-43.3325 -11.3327,-79.8327 -33.9991,-109.499 -22.6676,-29.6668 -53.5003,-51.8337 -92.5005,-66.4996 -39.0002,-14.6671 -83.1671,-22 -132.5,-22z"/>
+   <glyph unicode="V" horiz-adv-x="656" d="M499 648l145 0 0 -7.99989 -237 -640 -157 0 -237.999 640 0 7.99989 149.999 0 169.001 -504.999 168 504.999z"/>
+  </font>
+  <style type="text/css">
+   <![CDATA[
+    @font-face { font-family:"Dubai";font-variant:normal;font-weight:bold;src:url("#FontID0") format(svg)}
+    .str0 {stroke:#A40000;stroke-width:23.12;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:2.61313}
+    .fil0 {fill:none}
+    .fil1 {fill:#A40000}
+    .fil2 {fill:#A49D95}
+    .fnt0 {font-weight:bold;font-size:242.15px;font-family:'Dubai'}
+    .fnt1 {font-weight:bold;font-size:252.61px;font-family:'Dubai'}
+   ]]>
+  </style>
+ </defs>
+ <g id="Layer_x0020_1">
+  <metadata id="CorelCorpID_0Corel-Layer"/>
+  <g id="_2028951710912">
+   <circle class="fil0" cx="409.44" cy="409.44" r="409.44"/>
+   <g>
+    <circle class="fil0 str0" cx="409.44" cy="409.44" r="289.19"/>
+    <circle class="fil1" cx="409.44" cy="409.44" r="81.85"/>
+    <g transform="matrix(1.31518 0 0 1 -7278.59 659.577)">
+     <text x="5903.47" y="-171.68"  class="fil2 fnt0">S</text>
+    </g>
+    <g transform="matrix(1.02532 0 0 1 -5892.88 662.968)">
+     <text x="5903.47" y="-171.68"  class="fil2 fnt1">V</text>
+    </g>
+   </g>
+  </g>
+ </g>
+</svg>

@@ -7,11 +7,13 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.vega.sting.MainActivity
+import com.vega.sting.R
 import com.vega.sting.core.RecordingState
 import com.vega.sting.core.RecordingStateManager
 import com.vega.sting.database.AppDatabase
 import com.vega.sting.database.Recording
 import com.vega.sting.database.RecordingType
+import com.vega.sting.recording.ActiveRecordingSpec
 import com.vega.sting.recording.AudioRecordingManager
 import com.vega.sting.recording.RecordingManager
 import com.vega.sting.settings.SettingsManager
@@ -46,6 +48,10 @@ class RecordingService : LifecycleService() {
     private var storageMonitorJob: Job? = null
     private lateinit var profileManager: DeviceProfileManager
 
+    
+    
+    private var activeVideoSpec: ActiveRecordingSpec? = null
+
     override fun onCreate() {
         super.onCreate()
         videoRecordingManager = RecordingManager(this)
@@ -54,11 +60,11 @@ class RecordingService : LifecycleService() {
         profileManager = DeviceProfileManager(this)
         createNotificationChannel()
 
-        // Trigger async profile scan so it's cached before recording starts
+        
         lifecycleScope.launch {
             try {
                 profileManager.getOrScanProfile()
-                // Cleanup telemetry older than 30 days
+                
                 val thirtyDaysAgo = System.currentTimeMillis() - (30L * 24 * 60 * 60 * 1000)
                 db.cameraSessionTelemetryDao().deleteOlderThan(thirtyDaysAgo)
             } catch (_: Exception) {}
@@ -89,7 +95,7 @@ class RecordingService : LifecycleService() {
     private fun handleStartAction(newType: RecordingType) {
         if (RecordingStateManager.isRecording()) {
             if (newType != recordingType) {
-                // Atomic mode switch initialization
+                
                 isSwitching = true
                 pendingRecordingType = newType
                 RecordingStateManager.updateState(
@@ -100,10 +106,10 @@ class RecordingService : LifecycleService() {
                     if (newType == RecordingType.AUDIO) "RECORDING_AUDIO" else "RECORDING_VIDEO"
                 )
                 
-                // Stop current; next one starts in callback (for Video) or immediately after (for Audio)
+                
                 stopCurrentRecording()
                 
-                // If the current mode was AUDIO, it finalized synchronously, so we start next immediately
+                
                 if (recordingType == RecordingType.AUDIO) {
                     onCurrentRecordingFinalized()
                 }
@@ -121,7 +127,7 @@ class RecordingService : LifecycleService() {
             val notification = createNotification("VEGA STING is recording ${recordingType.name}...")
             startForeground(1, notification)
             
-            // Add explicit delay for camera availability after foreground transition
+            
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 val settingsManager = SettingsManager(this@RecordingService)
                 lifecycleScope.launch {
@@ -165,7 +171,7 @@ class RecordingService : LifecycleService() {
         RecordingWidgetProvider.refreshWidget(this)
         stopCurrentRecording()
         
-        // If current was Audio, we finish immediately
+        
         if (recordingType == RecordingType.AUDIO) {
             RecordingStateManager.updateState(RecordingState.IDLE)
             WidgetStateManager.saveState(this, "IDLE")
@@ -177,7 +183,7 @@ class RecordingService : LifecycleService() {
     }
 
     private fun stopCurrentRecording() {
-        val typeToSave = recordingType // Capture type for save consistency
+        val typeToSave = recordingType 
         if (recordingType == RecordingType.AUDIO) {
             audioRecordingManager.stopAudioRecording()
             currentOutputFile?.let { saveRecordingToDb(it, typeToSave) }
@@ -214,14 +220,15 @@ class RecordingService : LifecycleService() {
         } else {
             val orientationMode = settingsManager.orientationMode.first()
 
-            // Cold-start: give the in-flight profile scan a bounded moment so the
-            // first video still gets the full adaptive preset (HEVC/16 Mbps/48 kHz)
-            // instead of the characteristics fallback. Timeout is safety-only.
+            
+            
+            
             withTimeoutOrNull(1_500) { profileManager.getOrScanProfile() }
 
             videoRecordingManager.startVideoRecording(outputFile, orientationMode,
-                onStart = {
-                    RecordingStateManager.updateState(RecordingState.RECORDING_VIDEO, fileName, "H.264")
+                onStart = { spec ->
+                    activeVideoSpec = spec
+                    RecordingStateManager.updateState(RecordingState.RECORDING_VIDEO, fileName, spec.codecLabel)
                     WidgetStateManager.saveState(this@RecordingService, "RECORDING_VIDEO")
                     sendBroadcast(Intent("com.vega.sting.ACTION_STATE_CHANGED"))
                     RecordingWidgetProvider.refreshWidget(this@RecordingService)
@@ -231,10 +238,12 @@ class RecordingService : LifecycleService() {
                     val finalizedType = RecordingType.VIDEO
                     if (error != null) {
                         RecordingStateManager.setError("Recording Error: $error")
+                        activeVideoSpec = null
                         isSwitching = false
                         stopSelf()
                     } else {
-                        saveRecordingToDb(outputFile, finalizedType)
+                        saveRecordingToDb(outputFile, finalizedType, activeVideoSpec)
+                        activeVideoSpec = null
                         
                         if (isSwitching) {
                             onCurrentRecordingFinalized()
@@ -263,15 +272,26 @@ class RecordingService : LifecycleService() {
         super.onDestroy()
     }
 
-    private fun saveRecordingToDb(file: File, type: RecordingType) {
+    private fun saveRecordingToDb(
+        file: File,
+        type: RecordingType,
+        spec: ActiveRecordingSpec? = null
+    ) {
+        
+        
+        val codec = if (type == RecordingType.AUDIO) "AAC" else (spec?.codecLabel ?: "H.264")
+        val width = spec?.width ?: 0
+        val height = spec?.height ?: 0
         lifecycleScope.launch {
             val recording = Recording(
                 name = file.name,
                 timestamp = System.currentTimeMillis(),
                 path = file.absolutePath,
                 type = type,
-                codec = if (type == RecordingType.AUDIO) "AAC" else "H.264",
-                size = file.length()
+                codec = codec,
+                size = file.length(),
+                width = width,
+                height = height
             )
             db.recordingDao().insert(recording)
         }
@@ -287,7 +307,7 @@ class RecordingService : LifecycleService() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Recording in Progress")
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
@@ -322,7 +342,7 @@ class RecordingService : LifecycleService() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("LOW STORAGE")
             .setContentText("LESS THAN 1GB FREE")
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(R.drawable.ic_notification)
             .build()
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(1001, notification)
@@ -332,7 +352,7 @@ class RecordingService : LifecycleService() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("VIDEO STOPPED")
             .setContentText("SWITCHED TO AUDIO DUE TO LOW STORAGE")
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(R.drawable.ic_notification)
             .build()
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(1002, notification)

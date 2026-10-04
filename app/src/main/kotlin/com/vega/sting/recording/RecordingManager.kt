@@ -20,6 +20,7 @@ import com.vega.sting.camera.DeviceProfileManager
 import com.vega.sting.camera.DynamicFallbackEngine
 import com.vega.sting.camera.RecordingPreset
 import com.vega.sting.camera.VideoPreference
+import com.vega.sting.camera.resolveEffectiveVideoCodec
 import com.vega.sting.database.AppDatabase
 import com.vega.sting.database.CameraSessionTelemetry
 import com.vega.sting.orientation.OrientationManager
@@ -29,6 +30,26 @@ import com.vega.sting.overlay.OverlaySettings
 import com.vega.sting.settings.SettingsManager
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+
+
+data class ActiveRecordingSpec(
+    val codecLabel: String,
+    val width: Int,
+    val height: Int,
+    val fps: Int
+) {
+    val resolutionLabel: String
+        get() = "${width}x${height}"
+
+    companion object {
+        fun fromPreset(preset: RecordingPreset) = ActiveRecordingSpec(
+            codecLabel = if (preset.codec == "HEVC") "H.265" else "H.264",
+            width = preset.width,
+            height = preset.height,
+            fps = preset.fps
+        )
+    }
+}
 
 class RecordingManager(private val context: Context) {
     private var cameraDevice: CameraDevice? = null
@@ -44,23 +65,23 @@ class RecordingManager(private val context: Context) {
 
     private val orientationManager = OrientationManager(context)
 
-    // ── Adaptive Camera Profile System ──────────────────────────────────
+    
     private val profileManager = DeviceProfileManager(context)
     private val telemetryDao = AppDatabase.getDatabase(context).cameraSessionTelemetryDao()
     private val fallbackEngine = DynamicFallbackEngine(telemetryDao)
 
-    /** The preset actually used for the current recording session. */
+    
     private var activePreset: RecordingPreset? = null
-    /** Camera ID used for the current session. */
+    
     private var activeCameraId: String? = null
-    /** Timestamp when recording started (for telemetry duration). */
+    
     private var recordingStartTime: Long = 0L
 
     companion object {
         private const val TAG = "RecordingManager"
 
-        // Calibration for the rotation hint. Sweeps confirmed offset 0 is correct on
-        // this device (mirrored): PORTRAIT -> 90°, FOLLOW_SENSOR -> 90 - deviceRot.
+        
+        
         private const val ORIENTATION_OFFSET_DEGREES = 0
 
         fun generateFileName(isAudio: Boolean): String {
@@ -74,7 +95,7 @@ class RecordingManager(private val context: Context) {
     fun startVideoRecording(
         outputFile: File,
         orientationMode: String,
-        onStart: () -> Unit,
+        onStart: (ActiveRecordingSpec) -> Unit,
         onFinalize: (String?) -> Unit
     ) {
         onFinalizeCallback = onFinalize
@@ -134,7 +155,7 @@ class RecordingManager(private val context: Context) {
         camera: CameraDevice,
         outputFile: File,
         orientationMode: String,
-        onStart: () -> Unit,
+        onStart: (ActiveRecordingSpec) -> Unit,
         onFinalize: (String?) -> Unit
     ) {
         try {
@@ -152,15 +173,15 @@ class RecordingManager(private val context: Context) {
                 }
 
                 else -> {
-                    // Allow the sensor a brief moment to report before cold-start
-                    // recordings; falls back to display rotation if it never does.
+                    
+                    
                     orientationManager.settledRotation()
                 }
             }
 
-            // ── Device-derived rotation metadata (auto-calibrated) ───────
-            // STANDARD: MediaRecorder's orientation hint is set once per camera
-            // session, so capture a single snapshot and reuse it everywhere.
+            
+            
+            
             val sensorOrientation = characteristics.get(
                 CameraCharacteristics.SENSOR_ORIENTATION
             ) ?: 0
@@ -186,7 +207,7 @@ class RecordingManager(private val context: Context) {
                     "deviceRot=$deviceRotation degrees=$deviceRotationDegrees front=$isFrontFacing " +
                     "raw=$rawRotationDegrees offset=$ORIENTATION_OFFSET_DEGREES hint=$cameraRotationDegrees")
 
-            // ── Adaptive Preset Selection ───────────────────────────────
+            
             val profile = try { profileManager.getProfile() } catch (e: Exception) { null }
             val requestedCodec = loadRequestedCodec()
             val videoPreference = loadVideoPreference()
@@ -211,7 +232,7 @@ class RecordingManager(private val context: Context) {
                 setVideoSource(MediaRecorder.VideoSource.SURFACE)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setOutputFile(outputFile.absolutePath)
-                // Adaptive configuration from device profile
+                
                 setVideoEncodingBitRate(preset.bitrate)
                 setVideoFrameRate(preset.fps)
                 setVideoSize(videoWidth, videoHeight)
@@ -225,7 +246,7 @@ class RecordingManager(private val context: Context) {
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 setAudioSamplingRate(audioSampleRate)
                 setAudioChannels(audioChannels)
-                // Device-derived rotation metadata (auto-calibrated)
+                
                 setOrientationHint(cameraRotationDegrees)
                 prepare()
             }
@@ -246,7 +267,7 @@ class RecordingManager(private val context: Context) {
             val captureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
             captureRequestBuilder.addTarget(overlaySurface)
 
-            // ── Apply Camera2 controls from profile ─────────────────────
+            
             applyAdaptiveControls(captureRequestBuilder, characteristics, preset)
 
             @Suppress("DEPRECATION")
@@ -258,7 +279,7 @@ class RecordingManager(private val context: Context) {
                         mediaRecorder?.start()
                         isRecording = true
                         recordingStartTime = System.currentTimeMillis()
-                        mainExecutor.execute { onStart() }
+                        mainExecutor.execute { onStart(ActiveRecordingSpec.fromPreset(preset)) }
                     } catch (e: Exception) {
                         e.printStackTrace()
                         closeCamera()
@@ -284,8 +305,8 @@ class RecordingManager(private val context: Context) {
 
     fun stopRecording() {
         if (isRecording) {
-            // BUG2 FIX: abortCaptures() can lock the camera HAL on Android 13/14.
-            // Use isolated try-catch blocks for each teardown step.
+            
+            
             try {
                 captureSession?.stopRepeating()
             } catch (_: Exception) {}
@@ -299,7 +320,7 @@ class RecordingManager(private val context: Context) {
             } catch (_: Exception) {}
 
             isRecording = false
-            // Log successful session telemetry
+            
             logTelemetry(success = true, failureReason = null)
             val callback = onFinalizeCallback
             mainExecutor.execute { callback?.invoke(null) }
@@ -309,10 +330,7 @@ class RecordingManager(private val context: Context) {
         stopBackgroundThread()
     }
 
-    /**
-     * BUG3 FIX: Resets recording state when a session fails to finalize.
-     * Call this inside onFinalize error branches to prevent poisoned future starts.
-     */
+    
     fun reset() {
         isRecording = false
         onFinalizeCallback = null
@@ -373,12 +391,9 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    // ── Adaptive Camera Profile System ──────────────────────────────────
+    
 
-    /**
-     * Resolves the best recording preset using the adaptive profile system.
-     * Falls back to safe defaults if the profile is unavailable.
-     */
+    
     private fun resolvePreset(
         characteristics: CameraCharacteristics,
         profile: DeviceProfile?,
@@ -387,7 +402,7 @@ class RecordingManager(private val context: Context) {
     ): RecordingPreset {
         return try {
             if (profile != null) {
-                // Use fallback engine which queries telemetry for blacklisted configs
+                
                 val preset = runBlocking {
                     fallbackEngine.selectSafePreset(
                         profile = profile,
@@ -397,7 +412,7 @@ class RecordingManager(private val context: Context) {
                 }
                 preset.copy(codec = resolveVideoCodec(profile, requestedCodec))
             } else {
-                // Profile not yet generated — fall back to device characteristics
+                
                 Log.w(TAG, "No device profile available, using characteristics-based selection")
                 selectFromCharacteristics(characteristics, preference)
             }
@@ -407,33 +422,19 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    /**
-     * Resolves the effective video codec from the user preference intersected
-     * with hardware encoder support (auto-calibration). HEVC is only used when a
-     * hardware HEVC encoder can do at least 1080p; otherwise we fall back to H.264.
-     */
+    
     private fun resolveVideoCodec(
         profile: DeviceProfile,
         requestedCodec: String
     ): String {
-        if (requestedCodec != "H.265") return "H264"
-        val hasHardwareHevc = profile.encoders.videoEncoders.any { encoder ->
-            encoder.mimeType == MediaFormat.MIMETYPE_VIDEO_HEVC &&
-                encoder.isHardwareAccelerated &&
-                encoder.maxWidth >= 1920 &&
-                encoder.maxHeight >= 1080
-        }
-        if (!hasHardwareHevc) {
+        val codec = resolveEffectiveVideoCodec(requestedCodec, profile.encoders.videoEncoders)
+        if (requestedCodec == "H.265" && codec != "HEVC") {
             Log.w(TAG, "HEVC requested but no 1080p hardware encoder; falling back to H.264")
         }
-        return if (hasHardwareHevc) "HEVC" else "H264"
+        return codec
     }
 
-    /**
-     * Derives the audio sample rate and channel count from the scanned AAC
-     * encoder capabilities (auto-calibration). Prefers 48 kHz stereo — matching
-     * the stock camera — when supported; degrades gracefully on other devices.
-     */
+    
     private fun resolveAudioConfig(profile: DeviceProfile?): Pair<Int, Int> {
         val aac = profile
             ?.encoders
@@ -467,11 +468,7 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    /**
-     * Loads the user's video size/ratio preference plus the device display
-     * aspect (max/min) used when AUTO/DISPLAY must resolve to a screen-matching
-     * ratio. Falls back to safe defaults when settings are unavailable.
-     */
+    
     private fun loadVideoPreference(): VideoPreference {
         val displayAspect = try {
             val w = context.resources.displayMetrics.widthPixels
@@ -494,11 +491,7 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    /**
-     * Legacy-compatible fallback: selects video size directly from CameraCharacteristics.
-     * Used when the device profile hasn't been scanned yet. Honors the user's
-     * size/ratio preference, falling back to the nearest supported size.
-     */
+    
     private fun selectFromCharacteristics(
         characteristics: CameraCharacteristics,
         preference: VideoPreference
@@ -536,12 +529,7 @@ class RecordingManager(private val context: Context) {
         return ranges.any { it.upper >= fps }
     }
 
-    /**
-     * Best-effort selection from CameraCharacteristics (no profile yet).
-     * Resolves the preference to one or more target aspects (explicit ratio,
-     * else the display ratio, else 16:9) and picks the largest supported size
-     * at that ratio within the requested width — stepping down as needed.
-     */
+    
     private fun selectVideoSize(
         characteristics: CameraCharacteristics,
         preference: VideoPreference
@@ -560,7 +548,7 @@ class RecordingManager(private val context: Context) {
 
         if (supportedSizes.isEmpty()) return defaultSize
 
-        // Candidate aspects in priority order
+        
         val aspectChoices = buildList {
             when (preference.ratio) {
                 "16:9" -> add(16f / 9f)
@@ -568,7 +556,7 @@ class RecordingManager(private val context: Context) {
                 "1:1" -> add(1f)
                 "DISPLAY" -> add(preference.displayAspect)
                 else -> {
-                    // AUTO: display ratio first, then 16:9
+                    
                     add(preference.displayAspect)
                     add(16f / 9f)
                 }
@@ -584,7 +572,7 @@ class RecordingManager(private val context: Context) {
             }
         }
 
-        // Relaxed step-down: largest supported size within requested width
+        
         val relaxed = supportedSizes.filter { it.width <= requestedWidth }
         return (if (relaxed.isNotEmpty()) relaxed else supportedSizes)
             .maxWithOrNull(compareBy { it.width * it.height })
@@ -598,7 +586,7 @@ class RecordingManager(private val context: Context) {
             "1440P" -> 2560
             "4K" -> 3840
             "1080P" -> 1920
-            else -> 1920 // AUTO / unknown
+            else -> 1920 
         }
     }
 
@@ -609,16 +597,13 @@ class RecordingManager(private val context: Context) {
             kotlin.math.abs(inverted - target) <= 0.05f
     }
 
-    /**
-     * Applies Camera2 CaptureRequest controls based on the device profile.
-     * Applies stabilization, noise reduction, and scene modes when available.
-     */
+    
     private fun applyAdaptiveControls(
         builder: CaptureRequest.Builder,
         characteristics: CameraCharacteristics,
         preset: RecordingPreset
     ) {
-        // Video stabilization
+        
         if (preset.videoStabilization) {
             val availableVideoStab = characteristics.get(
                 CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES
@@ -631,7 +616,7 @@ class RecordingManager(private val context: Context) {
             }
         }
 
-        // Optical stabilization
+        
         if (preset.opticalStabilization) {
             val availableOpticalStab = characteristics.get(
                 CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION
@@ -644,7 +629,7 @@ class RecordingManager(private val context: Context) {
             }
         }
 
-        // Noise reduction — use FAST for video recording (low latency)
+        
         val nrModes = characteristics.get(
             CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES
         )
@@ -652,7 +637,7 @@ class RecordingManager(private val context: Context) {
             builder.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_FAST)
         }
 
-        // Edge enhancement — FAST for video
+        
         val edgeModes = characteristics.get(
             CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES
         )
@@ -660,7 +645,7 @@ class RecordingManager(private val context: Context) {
             builder.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_FAST)
         }
 
-        // Continuous video AF
+        
         val afModes = characteristics.get(
             CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES
         )
@@ -669,9 +654,7 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    /**
-     * Logs a session to the telemetry database for the fallback engine.
-     */
+    
     private fun logTelemetry(success: Boolean, failureReason: String?) {
         val preset = activePreset ?: return
         val duration = if (recordingStartTime > 0) {

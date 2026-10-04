@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,6 +14,8 @@ import android.os.Environment
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,16 +29,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vega.sting.core.RecordingState
 import com.vega.sting.core.RecordingStateManager
@@ -64,6 +70,7 @@ import java.util.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
@@ -87,8 +94,8 @@ fun MainContent() {
     val consent by consentStore.consent.collectAsState(initial = null)
 
     when {
-        // Nothing below the gate may mount before consent: no permission prompts,
-        // no ViewModel, no OTA network call.
+        
+        
         consent == null -> ConsentLoadingScreen()
         !consent!!.isComplete -> WelcomeConsentScreen(
             onAccept = { scope.launch { consentStore.accept() } }
@@ -119,9 +126,21 @@ private fun AcceptedAppContent(viewModel: RecordingViewModel = viewModel()) {
     var currentScreen by remember { mutableStateOf("home") }
     var selectedPlaybackRecording by remember { mutableStateOf<com.vega.sting.database.Recording?>(null) }
 
-    // Bumped by the Settings "check for updates" action to force a manual,
-    // unthrottled OTA check.
+    
+    
     var updateCheckToken by remember { mutableIntStateOf(0) }
+
+    
+    
+    
+    LaunchedEffect(currentScreen) { viewModel.clearSelection() }
+
+    
+    
+    
+    BackHandler(enabled = currentScreen != "home") {
+        currentScreen = "home"
+    }
 
     when (currentScreen) {
         "home" -> HomeScreen(
@@ -147,11 +166,11 @@ private fun AcceptedAppContent(viewModel: RecordingViewModel = viewModel()) {
         }
     }
 
-    // Mounted once at the root so the update prompt survives screen navigation.
-    // While the recorder is starting, running, switching or stopping the automatic
-    // check is deferred rather than dropped: this effect re-runs and checks as soon
-    // as the app returns to a settled state. ERROR still allows a check so a failed
-    // recording can never permanently block updates.
+    
+    
+    
+    
+    
     val recordingState by RecordingStateManager.state.collectAsState()
     val autoCheckAllowed = recordingState == RecordingState.IDLE ||
         recordingState == RecordingState.ERROR
@@ -187,7 +206,7 @@ fun HomeScreen(
     val storageLocation by settingsManager.storageLocation.collectAsState(initial = "INTERNAL")
     val resolution by settingsManager.resolution.collectAsState(initial = "AUTO")
     val fps by settingsManager.fps.collectAsState(initial = 30)
-    val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.264")
+    val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     val audioCodec by settingsManager.audioCodec.collectAsState(initial = "AAC")
     val persistedSortTypeStr by settingsManager.sortType.collectAsState(initial = "DATE")
     val persistedSortOrderStr by settingsManager.sortOrder.collectAsState(initial = "DESC")
@@ -247,10 +266,27 @@ fun HomeScreen(
         }
     }
 
+    
+    
+    
+    
+    
+    var permissionsRequested by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
-        launcher.launch(permissions)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
+        if (!permissionsRequested) {
+            permissionsRequested = true
+
+            val missing = permissions.filter {
+                ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missing.isNotEmpty()) {
+                launcher.launch(missing.toTypedArray())
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                !Environment.isExternalStorageManager()
+            ) {
                 try {
                     val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
                     intent.addCategory("android.intent.category.DEFAULT")
@@ -282,7 +318,8 @@ fun HomeScreen(
                     action = RecordingService.ACTION_START_AUDIO
                 }
                 context.startForegroundService(intent)
-            }
+            },
+            onCancel = { showLowStorageDialog = false }
         )
     }
 
@@ -292,10 +329,10 @@ fun HomeScreen(
             .background(Background)
             .safeDrawingPadding()
     ) {
-        // Header
+        
         HeaderBar(recordingState)
 
-        // Status Panel
+        
         val modeText = when (recordingState) {
             RecordingState.RECORDING_VIDEO -> "AV RECORDING"
             RecordingState.RECORDING_AUDIO -> "AUDIO RECORDING"
@@ -349,7 +386,7 @@ fun HomeScreen(
             fileName = currentFileName
         )
 
-        // Filter Bar
+        
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -402,7 +439,7 @@ fun HomeScreen(
             }
         }
 
-        // Search Bar
+        
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
@@ -419,7 +456,7 @@ fun HomeScreen(
             )
         )
 
-        // Table Header
+        
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -450,11 +487,11 @@ fun HomeScreen(
             )
         }
 
-        // Recording List
+        
         LazyColumn(modifier = Modifier.weight(1f)) {
-            // Live Recording Row
+            
             if (recordingState == RecordingState.RECORDING_VIDEO || recordingState == RecordingState.RECORDING_AUDIO) {
-                item {
+                item(key = "live_recording") {
                     RecordingRow(
                         index = 0,
                         recording = com.vega.sting.database.Recording(
@@ -474,7 +511,13 @@ fun HomeScreen(
                 }
             }
 
-            itemsIndexed(filteredRecordings) { index, recording ->
+            itemsIndexed(
+                items = filteredRecordings,
+                
+                
+                
+                key = { _, recording -> recording.id }
+            ) { index, recording ->
                 RecordingRow(
                     index = index + 1, 
                     recording = recording,
@@ -488,7 +531,7 @@ fun HomeScreen(
             }
         }
 
-        // Action Bar
+        
         ActionBar(
             recordingState = recordingState,
             selectedCount = selectedIds.size,
@@ -527,7 +570,7 @@ fun HomeScreen(
                 context.startForegroundService(intent)
             },
             onDelete = {
-                selectedIds.forEach { viewModel.softDelete(it) }
+                viewModel.softDeleteAll(selectedIds)
                 viewModel.clearSelection()
             },
             onShare = {
@@ -566,32 +609,35 @@ fun ActionBar(
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         if (selectedCount > 0) {
-            TerminalButton(text = "Delete", onClick = onDelete, modifier = Modifier.weight(1f))
             TerminalButton(text = "Share", onClick = onShare, modifier = Modifier.weight(1f))
-            TerminalButton(text = "Trash", onClick = onNavigateToTrash, modifier = Modifier.weight(1f))
-            TerminalButton(text = "Setup", onClick = onNavigateToSettings, modifier = Modifier.weight(1f))
+            TerminalButton(text = "Delete", onClick = onDelete, isStopMode = true, modifier = Modifier.weight(1f))
         } else {
             when (recordingState) {
                 RecordingState.IDLE, RecordingState.ERROR -> {
                     TerminalButton(text = "Video", onClick = onStartVideo, modifier = Modifier.weight(1f))
                     TerminalButton(text = "Audio", onClick = onStartAudio, modifier = Modifier.weight(1f))
+                    TerminalButton(text = "Trash", onClick = onNavigateToTrash, modifier = Modifier.weight(1f))
+                    TerminalButton(text = "Setup", onClick = onNavigateToSettings, modifier = Modifier.weight(1f))
                 }
                 RecordingState.RECORDING_VIDEO, RecordingState.STARTING_VIDEO, RecordingState.SWITCHING_TO_VIDEO -> {
                     TerminalButton(text = "Stop", onClick = onStop, isStopMode = true, modifier = Modifier.weight(1f))
                     TerminalButton(text = "Audio", onClick = onStartAudio, modifier = Modifier.weight(1f))
+                    TerminalButton(text = "Trash", onClick = onNavigateToTrash, modifier = Modifier.weight(1f))
+                    TerminalButton(text = "Setup", onClick = onNavigateToSettings, modifier = Modifier.weight(1f))
                 }
                 RecordingState.RECORDING_AUDIO, RecordingState.STARTING_AUDIO, RecordingState.SWITCHING_TO_AUDIO -> {
-                    TerminalButton(text = "Video", onClick = onStartVideo, modifier = Modifier.weight(1f))
                     TerminalButton(text = "Stop", onClick = onStop, isStopMode = true, modifier = Modifier.weight(1f))
+                    TerminalButton(text = "Video", onClick = onStartVideo, modifier = Modifier.weight(1f))
+                    TerminalButton(text = "Trash", onClick = onNavigateToTrash, modifier = Modifier.weight(1f))
+                    TerminalButton(text = "Setup", onClick = onNavigateToSettings, modifier = Modifier.weight(1f))
                 }
+                
+                
+                
                 RecordingState.STOPPING -> {
-                    TerminalButton(text = "Stopping...", onClick = {}, enabled = false, modifier = Modifier.weight(1f))
-                    TerminalButton(text = "Stopping...", onClick = {}, enabled = false, modifier = Modifier.weight(1f))
+                    TerminalButton(text = "Stopping...", onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth())
                 }
             }
-            
-            TerminalButton(text = "Trash", onClick = onNavigateToTrash, modifier = Modifier.weight(1f))
-            TerminalButton(text = "Setup", onClick = onNavigateToSettings, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -674,8 +720,18 @@ fun RecordingRow(
 ) {
     val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     val timeStr = sdf.format(Date(recording.timestamp))
-    val sizeStr = String.format("%.1f MB", recording.size / (1024f * 1024f))
+    val sizeStr = if (isLive) "--" else StorageHealthManager.formatFileSize(recording.size)
     val isAudio = recording.type == com.vega.sting.database.RecordingType.AUDIO
+
+    
+    
+    
+    val resolutionStr = when {
+        isLive -> "---"
+        isAudio -> "AUDIO"
+        recording.hasKnownResolution -> recording.resolutionLabel
+        else -> "UNKNOWN"
+    }
 
     Column(
         modifier = Modifier
@@ -698,9 +754,15 @@ fun RecordingRow(
             .padding(8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = if (isAudio) "🎤" else "🎥",
-                modifier = Modifier.padding(end = 8.dp)
+            Icon(
+                painter = painterResource(
+                    if (isAudio) R.drawable.ic_mic else R.drawable.ic_videocam
+                ),
+                contentDescription = null,
+                tint = if (isSelected) AccentOrange else TextSecondary,
+                modifier = Modifier
+                    .padding(end = 8.dp)
+                    .size(18.dp)
             )
             Text(
                 text = recording.name,
@@ -744,7 +806,7 @@ fun RecordingRow(
         
         Row {
             Text(
-                text = "$timeStr | ${recording.codec} | ${if (isAudio) "AUDIO" else "1080P"} | $sizeStr",
+                text = "$timeStr | ${recording.codec} | $resolutionStr | $sizeStr",
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary
             )

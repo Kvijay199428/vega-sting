@@ -60,3 +60,7 @@ graphify-out/
 hs_err_pid*.log
 replay_*.log
 script-copier.py
+
+# Deferred / local artifacts
+gimble.zip
+build_release.log

@@ -73,7 +73,9 @@ automatically lawful in every case — see
 - **Foreground recording** that keeps camera and microphone running even
   with the screen off.
 - **Quick Settings tile** and a **home-screen widget** and app
-  **shortcuts** for starting a recording quickly.
+  **shortcuts** for starting a recording quickly. The widget scales to the
+  full widget area and the notification carries a **STOP** action for ending
+  the recording without opening the app.
 - **Local storage** on internal, SD card or USB OTG, with storage health
   checks and a clear/free indicator.
 - **Trash with a 30-day retention** sweep, restore, empty and permanent
@@ -98,7 +100,7 @@ automatically lawful in every case — see
 
 Get the latest signed release from the
 [Releases page](https://github.com/Kvijay199428/VEGA-STING/releases/latest),
-and pick the asset named **`vega-sting-<versionName>.apk`** (e.g. `vega-sting-1.0.4.apk`).
+and pick the asset named **`vega-sting-<versionName>.apk`** (e.g. `vega-sting-1.0.5.apk`).
 
 ```bash
 sha256sum vega-sting-<versionName>.apk
@@ -179,6 +181,10 @@ unthrottled update check, and shows the version, build and developer.
 | Consent | Trash | Trash selection | Settings |
 |:---:|:---:|:---:|:---:|
 | <img src="docs/screenshots/01-consent.png" width="240" alt="Consent screen"> | <img src="docs/screenshots/05-trash.png" width="240" alt="Trash"> | <img src="docs/screenshots/06-trash-selection.png" width="240" alt="Trash selection"> | <img src="docs/screenshots/07-settings.png" width="240" alt="Settings"> |
+
+| Home-screen widget |
+|:---:|
+| <img src="docs/screenshots/08-widget.png" width="320" alt="VEGA STING home-screen widget"> |
 
 ---
 

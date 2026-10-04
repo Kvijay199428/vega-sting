@@ -72,6 +72,7 @@ class RecordingService : LifecycleService() {
     }
 
     private var ignoreWarning = false
+    private var foregroundStarted = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -126,6 +127,7 @@ class RecordingService : LifecycleService() {
             )
             val notification = createNotification("VEGA STING is recording ${recordingType.name}...")
             startForeground(1, notification)
+            foregroundStarted = true
             
             
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -178,6 +180,7 @@ class RecordingService : LifecycleService() {
             sendBroadcast(Intent("com.vega.sting.ACTION_STATE_CHANGED"))
             RecordingWidgetProvider.refreshWidget(this)
             stopForeground(STOP_FOREGROUND_REMOVE)
+            foregroundStarted = false
             stopSelf()
         }
     }
@@ -217,6 +220,7 @@ class RecordingService : LifecycleService() {
             WidgetStateManager.saveState(this@RecordingService, "RECORDING_AUDIO")
             sendBroadcast(Intent("com.vega.sting.ACTION_STATE_CHANGED"))
             RecordingWidgetProvider.refreshWidget(this@RecordingService)
+            updateRecordingNotification()
         } else {
             val orientationMode = settingsManager.orientationMode.first()
 
@@ -233,6 +237,7 @@ class RecordingService : LifecycleService() {
                     sendBroadcast(Intent("com.vega.sting.ACTION_STATE_CHANGED"))
                     RecordingWidgetProvider.refreshWidget(this@RecordingService)
                     startStorageMonitor()
+                    updateRecordingNotification()
                 },
                 onFinalize = { error ->
                     val finalizedType = RecordingType.VIDEO
@@ -252,6 +257,7 @@ class RecordingService : LifecycleService() {
                             WidgetStateManager.saveState(this@RecordingService, "IDLE")
                             sendBroadcast(Intent("com.vega.sting.ACTION_STATE_CHANGED"))
                             RecordingWidgetProvider.refreshWidget(this@RecordingService)
+                            foregroundStarted = false
                             stopForeground(STOP_FOREGROUND_REMOVE)
                             stopSelf()
                         }
@@ -263,6 +269,7 @@ class RecordingService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        foregroundStarted = false
         if (!isSwitching) {
             RecordingStateManager.updateState(RecordingState.IDLE)
             WidgetStateManager.saveState(this, "IDLE")
@@ -304,13 +311,39 @@ class RecordingService : LifecycleService() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
+        val stopIntent = Intent(this, RecordingService::class.java).apply {
+            action = ACTION_STOP
+            setPackage(packageName)
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            9001,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Recording in Progress")
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
+            .addAction(
+                R.drawable.ic_stop,
+                "STOP",
+                stopPendingIntent
+            )
             .setOngoing(true)
             .build()
+    }
+
+    private fun updateRecordingNotification() {
+        if (!foregroundStarted) return
+        val text = when (recordingType) {
+            RecordingType.VIDEO -> "VEGA STING is recording VIDEO..."
+            RecordingType.AUDIO -> "VEGA STING is recording AUDIO..."
+        }
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(1, createNotification(text))
     }
 
     private fun startStorageMonitor() {

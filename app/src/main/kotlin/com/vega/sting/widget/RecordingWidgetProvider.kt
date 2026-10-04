@@ -97,6 +97,7 @@ class RecordingWidgetProvider : AppWidgetProvider() {
                 val sizing = getWidgetSizing(manager, widgetId)
 
                 views.setTextViewText(R.id.widgetTitle, model.title)
+                views.setImageViewResource(R.id.widgetLogo, R.drawable.widget_logo)
                 views.setTextViewText(R.id.btnLeft, model.leftText)
                 views.setTextViewText(R.id.btnRight, model.rightText)
                 views.setTextColor(R.id.widgetTitle, model.titleColor)
@@ -143,28 +144,21 @@ class RecordingWidgetProvider : AppWidgetProvider() {
             val options = manager.getAppWidgetOptions(widgetId)
             val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 220)
             val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 220)
-            val longSide = maxOf(width, height).toFloat()
             val shortSide = minOf(width, height).coerceAtLeast(1).toFloat()
-            val ratio = longSide / shortSide
 
             return when {
-                ratio > 1.35f -> WidgetSizing(
-                    rootPaddingDp = 14,
-                    panelPaddingDp = 8,
-                    titleSp = 18f,
-                    buttonSp = 11f
+                shortSide >= 130f -> WidgetSizing(
+                    rootPaddingDp = 8,
+                    panelPaddingDp = 3,
+                    titleSp = 14f,
+                    buttonSp = 10f
                 )
-                shortSide < 230f -> WidgetSizing(
-                    rootPaddingDp = 16,
-                    panelPaddingDp = 8,
-                    titleSp = 19f,
-                    buttonSp = 11f
-                )
+
                 else -> WidgetSizing(
-                    rootPaddingDp = 18,
-                    panelPaddingDp = 10,
-                    titleSp = 20f,
-                    buttonSp = 12f
+                    rootPaddingDp = 6,
+                    panelPaddingDp = 2,
+                    titleSp = 14f,
+                    buttonSp = 10f
                 )
             }
         }

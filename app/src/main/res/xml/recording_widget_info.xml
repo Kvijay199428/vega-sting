@@ -2,13 +2,13 @@
 
 <appwidget-provider
     xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="220dp"
-    android:minHeight="220dp"
-    android:minResizeWidth="220dp"
-    android:minResizeHeight="220dp"
-    android:maxResizeWidth="260dp"
-    android:maxResizeHeight="260dp"
+    android:minWidth="160dp"
+    android:minHeight="74dp"
+    android:minResizeWidth="140dp"
+    android:minResizeHeight="74dp"
+    android:maxResizeWidth="360dp"
+    android:maxResizeHeight="148dp"
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/widget_recording"
     android:resizeMode="horizontal|vertical"
-    android:widgetCategory="home_screen"/>
+    android:widgetCategory="home_screen" />

@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -179,6 +181,11 @@ private fun AcceptedAppContent(viewModel: RecordingViewModel = viewModel()) {
         autoCheckEnabled = autoCheckAllowed
     )
 }
+
+private val TableIndexWeight = 0.05f
+private val TableNameWeight = 0.55f
+private val TableTimeWeight = 0.25f
+private val TableSelectWeight = 0.15f
 
 @Composable
 fun HomeScreen(
@@ -457,35 +464,15 @@ fun HomeScreen(
         )
 
         
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Panel)
-                .padding(vertical = 4.dp, horizontal = 8.dp)
-                .border(0.5.dp, Border)
-        ) {
-            val allSelected = filteredRecordings.isNotEmpty() && filteredRecordings.all { selectedIds.contains(it.id) }
-            val selText = if (allSelected) "CLEAR ALL" else "SELECT ALL"
-
-            Text(text = "#", modifier = Modifier.weight(0.1f), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
-            Text(text = "NAME", modifier = Modifier.weight(if (selectionMode) 0.45f else 0.5f), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
-            Text(text = "TIME", modifier = Modifier.weight(if (selectionMode) 0.2f else 0.3f), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
-            Text(
-                text = if (selectionMode) selText else "SEL",
-                modifier = Modifier
-                    .weight(if (selectionMode) 0.25f else 0.1f)
-                    .clickable(enabled = selectionMode) {
-                        val visibleIds = filteredRecordings.map { it.id }
-                        if (allSelected) {
-                            viewModel.clearSelection()
-                        } else {
-                            viewModel.selectAll(visibleIds)
-                        }
-                    },
-                style = MaterialTheme.typography.bodySmall,
-                color = AccentYellow
-            )
-        }
+        val allSelected = filteredRecordings.isNotEmpty() && filteredRecordings.all { selectedIds.contains(it.id) }
+        RecordingTableHeader(
+            selectionMode = selectionMode,
+            allSelected = allSelected,
+            onSelectAll = {
+                val visibleIds = filteredRecordings.map { it.id }
+                if (allSelected) viewModel.clearSelection() else viewModel.selectAll(visibleIds)
+            }
+        )
 
         
         LazyColumn(modifier = Modifier.weight(1f)) {
@@ -649,12 +636,9 @@ fun HeaderBar(recordingState: RecordingState) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(
-                start = 12.dp,
-                end = 12.dp,
-                top = 10.dp,
-                bottom = 8.dp
-            ),
+            .height(64.dp)
+            .background(Background)
+            .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -707,6 +691,51 @@ fun FilterChip(text: String, active: Boolean, onClick: () -> Unit) {
     )
 }
 
+@Composable
+private fun RecordingTableHeader(
+    selectionMode: Boolean,
+    allSelected: Boolean,
+    onSelectAll: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(36.dp)
+            .background(Panel)
+            .border(0.5.dp, Border)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "#",
+            modifier = Modifier.weight(TableIndexWeight),
+            style = MaterialTheme.typography.bodySmall,
+            color = AccentYellow
+        )
+        Text(
+            text = "NAME",
+            modifier = Modifier.weight(TableNameWeight),
+            style = MaterialTheme.typography.bodySmall,
+            color = AccentYellow
+        )
+        Text(
+            text = "TIME",
+            modifier = Modifier.weight(TableTimeWeight),
+            style = MaterialTheme.typography.bodySmall,
+            color = AccentYellow
+        )
+        Text(
+            text = if (selectionMode) (if (allSelected) "CLEAR" else "SELECT") else "SEL",
+            modifier = Modifier
+                .weight(TableSelectWeight)
+                .clickable(enabled = selectionMode) { onSelectAll() },
+            style = MaterialTheme.typography.bodySmall,
+            color = AccentYellow,
+            textAlign = TextAlign.End
+        )
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun RecordingRow(
@@ -733,10 +762,20 @@ fun RecordingRow(
         else -> "UNKNOWN"
     }
 
+    val liveAlpha by rememberInfiniteTransition(label = "live").animateFloat(
+        initialValue = 1f,
+        targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp, horizontal = 8.dp)
+            .padding(vertical = 4.dp)
             .border(0.5.dp, if (isSelected) AccentOrange else if (isLive) Error else Border)
             .background(if (isSelected) Panel else Background)
             .combinedClickable(
@@ -751,65 +790,88 @@ fun RecordingRow(
                     onToggleSelection()
                 }
             )
-            .padding(8.dp)
+            .padding(horizontal = 8.dp, vertical = 8.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                painter = painterResource(
-                    if (isAudio) R.drawable.ic_mic else R.drawable.ic_videocam
-                ),
-                contentDescription = null,
-                tint = if (isSelected) AccentOrange else TextSecondary,
-                modifier = Modifier
-                    .padding(end = 8.dp)
-                    .size(18.dp)
-            )
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = recording.name,
+                text = if (isLive) "" else index.toString(),
+                modifier = Modifier.weight(TableIndexWeight),
                 style = MaterialTheme.typography.bodySmall,
-                color = if (isLive) Error else TextPrimary,
-                maxLines = 1,
-                modifier = Modifier.weight(1f)
-            )
-            if (isLive) {
-                val infiniteTransition = rememberInfiniteTransition(label = "live")
-                val alpha by infiniteTransition.animateFloat(
-                    initialValue = 1f,
-                    targetValue = 0.3f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(500, easing = LinearEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "alpha"
-                )
-                Text(
-                    text = "● LIVE",
-                    color = Error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.alpha(alpha)
-                )
-            } else {
-                Checkbox(
-                    checked = isSelected,
-                    onCheckedChange = { onToggleSelection() },
-                    modifier = Modifier.size(18.dp),
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = AccentOrange,
-                        uncheckedColor = Border,
-                        checkmarkColor = Background
-                    )
-                )
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(4.dp))
-        
-        Row {
-            Text(
-                text = "$timeStr | ${recording.codec} | $resolutionStr | $sizeStr",
-                style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary
             )
+
+            Row(
+                modifier = Modifier.weight(TableNameWeight),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    painter = painterResource(
+                        if (isAudio) R.drawable.ic_mic else R.drawable.ic_videocam
+                    ),
+                    contentDescription = null,
+                    tint = if (isSelected) AccentOrange else TextSecondary,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .padding(end = 4.dp)
+                )
+                Text(
+                    text = recording.name,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isLive) Error else TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Text(
+                text = timeStr,
+                modifier = Modifier.weight(TableTimeWeight),
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                maxLines = 1
+            )
+
+            Box(
+                modifier = Modifier.weight(TableSelectWeight),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                if (isLive) {
+                    Text(
+                        text = "● LIVE",
+                        color = Error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.alpha(liveAlpha)
+                    )
+                } else {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelection() },
+                        modifier = Modifier.size(18.dp),
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = AccentOrange,
+                            uncheckedColor = Border,
+                            checkmarkColor = Background
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Spacer(modifier = Modifier.weight(TableIndexWeight))
+            Text(
+                text = "${recording.codec} | $resolutionStr | $sizeStr",
+                modifier = Modifier
+                    .weight(TableNameWeight)
+                    .padding(start = 22.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.weight(TableTimeWeight + TableSelectWeight))
         }
     }
 }

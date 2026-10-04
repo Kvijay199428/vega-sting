@@ -14,6 +14,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.vega.sting.R
 import com.vega.sting.ui.components.DetailHeaderBar
@@ -22,6 +24,11 @@ import com.vega.sting.ui.theme.*
 import com.vega.sting.ui.viewmodel.RecordingViewModel
 import java.text.SimpleDateFormat
 import java.util.*
+
+private val TrashIndexWeight = 0.08f
+private val TrashNameWeight = 0.57f
+private val TrashDeletedWeight = 0.25f
+private val TrashSelectWeight = 0.10f
 
 @Composable
 fun TrashScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
@@ -94,18 +101,19 @@ fun TrashScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(36.dp)
                 .background(Panel)
-                .padding(vertical = 4.dp, horizontal = 8.dp)
                 .border(0.5.dp, Border)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = "#", modifier = Modifier.weight(0.1f), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
-            Text(text = "NAME", modifier = Modifier.weight(0.55f), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
-            Text(text = "DELETED", modifier = Modifier.weight(0.25f), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
+            Text(text = "#", modifier = Modifier.weight(TrashIndexWeight), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
+            Text(text = "NAME", modifier = Modifier.weight(TrashNameWeight), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
+            Text(text = "DELETED", modifier = Modifier.weight(TrashDeletedWeight), style = MaterialTheme.typography.bodySmall, color = AccentYellow)
             Text(
                 text = if (allSelected) "NONE" else "ALL",
                 modifier = Modifier
-                    .weight(0.1f)
-                    .heightIn(min = 48.dp)
+                    .weight(TrashSelectWeight)
                     .clickable(enabled = recordings.isNotEmpty()) {
                         if (allSelected) viewModel.clearSelection()
                         else viewModel.selectAll(recordings.map { it.id })
@@ -118,7 +126,8 @@ fun TrashScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
                         }
                     },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (recordings.isEmpty()) TextSecondary else AccentYellow
+                color = if (recordings.isEmpty()) TextSecondary else AccentYellow,
+                textAlign = TextAlign.End
             )
         }
 
@@ -182,17 +191,17 @@ fun TrashRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp, horizontal = 8.dp)
+            .padding(vertical = 4.dp)
             .border(0.5.dp, if (isSelected) AccentOrange else Border)
             .background(if (isSelected) Panel else Background)
             .clickable { onToggle() }
-            .padding(vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         val isAudio = recording.type == com.vega.sting.database.RecordingType.AUDIO
-        Text(text = index.toString(), modifier = Modifier.weight(0.1f), style = MaterialTheme.typography.bodySmall)
+        Text(text = index.toString(), modifier = Modifier.weight(TrashIndexWeight), style = MaterialTheme.typography.bodySmall)
 
-        Row(modifier = Modifier.weight(0.55f), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.weight(TrashNameWeight), verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 painter = painterResource(if (isAudio) R.drawable.ic_mic else R.drawable.ic_videocam),
                 contentDescription = null,
@@ -201,25 +210,37 @@ fun TrashRow(
                     .padding(end = 4.dp)
                     .size(16.dp)
             )
-            Text(text = recording.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            Text(
+                text = recording.name,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
 
-        Text(text = dateStr, modifier = Modifier.weight(0.25f), style = MaterialTheme.typography.bodySmall)
-
-        Checkbox(
-            checked = isSelected,
-            onCheckedChange = { onToggle() },
-            modifier = Modifier
-                .weight(0.1f)
-                
-                
-                
-                .semantics { contentDescription = "Select ${recording.name}" },
-            colors = CheckboxDefaults.colors(
-                checkedColor = AccentOrange,
-                uncheckedColor = Border,
-                checkmarkColor = Background
-            )
+        Text(
+            text = dateStr,
+            modifier = Modifier.weight(TrashDeletedWeight),
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
+
+        Box(
+            modifier = Modifier.weight(TrashSelectWeight),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = { onToggle() },
+                modifier = Modifier
+                    .semantics { contentDescription = "Select ${recording.name}" },
+                colors = CheckboxDefaults.colors(
+                    checkedColor = AccentOrange,
+                    uncheckedColor = Border,
+                    checkmarkColor = Background
+                )
+            )
+        }
     }
 }

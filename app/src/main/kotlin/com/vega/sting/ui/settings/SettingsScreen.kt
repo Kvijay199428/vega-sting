@@ -8,9 +8,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import android.content.Intent
@@ -323,12 +326,12 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             SettingsItem(label = "DEVELOPER", value = com.vega.sting.BuildConfig.DEV_NAME)
             SettingsItem(
                 label = "WEBSITE",
-                value = com.vega.sting.BuildConfig.DEV_WEBSITE,
+                value = "LINK",
                 onClick = { openUrl(context, com.vega.sting.BuildConfig.DEV_WEBSITE) }
             )
             SettingsItem(
                 label = "SOURCE",
-                value = com.vega.sting.BuildConfig.GITHUB_REPO_URL,
+                value = "GITHUB",
                 onClick = { openUrl(context, com.vega.sting.BuildConfig.GITHUB_REPO_URL) }
             )
             SettingsItem(label = "VERSION", value = com.vega.sting.BuildConfig.VERSION_NAME)
@@ -369,9 +372,9 @@ private fun nextOverlayPosition(current: String): String {
 
 @Composable
 fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
         Text(text = title, style = MaterialTheme.typography.titleLarge, color = AccentYellow)
-        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp, color = Border)
+        HorizontalDivider(modifier = Modifier.padding(top = 2.dp, bottom = 2.dp), thickness = 0.5.dp, color = Border)
         content()
     }
 }
@@ -381,12 +384,28 @@ fun SettingsItem(label: String, value: String, onClick: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
+            .heightIn(min = 36.dp)
             .clickable(enabled = onClick != null) { onClick?.invoke() },
-        horizontalArrangement = Arrangement.SpaceBetween
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = label, style = MaterialTheme.typography.bodyLarge, color = TextSecondary)
-        Text(text = "[ $value ]", style = MaterialTheme.typography.bodyLarge, color = if (onClick != null) AccentOrange else TextPrimary)
+        Text(
+            text = label,
+            modifier = Modifier.weight(0.48f),
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "[ $value ]",
+            modifier = Modifier.weight(0.52f),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (onClick != null) AccentOrange else TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End
+        )
     }
 }
 

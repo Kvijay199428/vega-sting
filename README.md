@@ -98,10 +98,10 @@ automatically lawful in every case — see
 
 Get the latest signed release from the
 [Releases page](https://github.com/Kvijay199428/VEGA-STING/releases/latest),
-and pick the asset named **`app-release.apk`**.
+and pick the asset named **`vega-sting-<versionName>.apk`** (e.g. `vega-sting-1.0.4.apk`).
 
 ```bash
-sha256sum app-release.apk
+sha256sum vega-sting-<versionName>.apk
 # expect the value published in the release notes
 ```
 
@@ -332,7 +332,7 @@ at the install prompt once the toggle is enabled.
 3. Commit and push, create an **annotated** tag named `v<versionName>`
    (for example `v1.0.2`), and push the tag.
 4. Create a GitHub release whose tag is that `v`-prefixed tag and whose first
-   `.apk` asset is `app-release.apk`. Record the version name and tag
+   `.apk` asset is `vega-sting-<versionName>.apk`. Record the version name and tag
    explicitly in the release notes.
 5. Confirm the release is neither a draft nor a pre-release. The `latest`
    endpoint ignores both, so users would never see the build.

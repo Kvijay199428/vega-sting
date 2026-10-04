@@ -1,7 +1,228 @@
-# VEGA STING
+<p align="center">
+  <img src=".assets/VOS.png" width="160" alt="VEGA STING — VOS logo" />
+</p>
 
-Screen-recording terminal for Android. Black / orange / monospace UI, built with
-Kotlin, Jetpack Compose and CameraX.
+<h1 align="center">VEGA STING</h1>
+
+<p align="center"><strong>
+Personal Safety Recording. Local by Design. Evidence When You Need It.
+</strong></p>
+
+<p align="center">
+  <a href="https://github.com/Kvijay199428/VEGA-STING/releases/latest">Latest release</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#how-to-use">How to use</a> ·
+  <a href="#tutorial">Tutorial</a> ·
+  <a href="#privacy-by-design">Privacy</a> ·
+  <a href="#development">Development</a>
+</p>
+
+---
+
+## What is VEGA STING?
+
+VEGA STING is a privacy-first Android audio and video recording app built
+around one idea:
+
+> **When an unexpected situation happens, the ability to preserve what
+> happened should remain in the user's hands.**
+
+It is a fast, user-controlled way to capture audio and video, keep
+recordings on your own device, review them later, and share them only when
+*you* decide to. It is built for lawful personal, professional,
+journalistic, documentary, and safety-oriented recording — not for
+uploading to someone else's cloud or serving an ad network.
+
+VEGA STING is a recording and local-management tool, not a social camera,
+not a cloud gallery, not an advertising platform, and not a surveillance
+service.
+
+---
+
+## Why it can matter to you
+
+A person involved in an unforeseen event may later need to explain what
+happened, when, what was said, what was visible, and how things developed.
+Human memory is unreliable, especially after a stressful event. An
+audio or video recording made at the moment can preserve information that
+would otherwise depend only on recollection.
+
+Situations where a recording can be useful (depending on the law and the
+circumstances) include:
+
+- an unexpected confrontation or harassment;
+- a road / transport incident;
+- a dispute or disagreement, documented while calm;
+- workplace incidents where recording is permitted;
+- journalistic or documentary work;
+- personal documentation of an important event;
+- other unforeseen circumstances where preserving audio or video is
+  appropriate.
+
+VEGA STING lets you record when *you* judge it appropriate and lawful.
+These examples are illustrative; capturing another person is not
+automatically lawful in every case — see
+[Responsible & lawful use](#responsible--lawful-use).
+
+---
+
+## Features
+
+- **Audio and video recording** via Camera2 and `MediaRecorder`, with
+  hardware-adaptive sizing, codecs and frame rates.
+- **Foreground recording** that keeps camera and microphone running even
+  with the screen off.
+- **Quick Settings tile** and a **home-screen widget** and app
+  **shortcuts** for starting a recording quickly.
+- **Local storage** on internal, SD card or USB OTG, with storage health
+  checks and a clear/free indicator.
+- **Trash with a 30-day retention** sweep, restore, empty and permanent
+  delete.
+- **Signature / watermark overlay** (timestamp, position, text size) on
+  new recordings.
+- **Playback, sharing and deletion** of recordings, all on-device.
+- **No account, no ads, no analytics** — recordings never leave the
+  device unless *you* share them.
+- **OTA updates** from GitHub Releases, checked on a schedule or from
+  Settings → About.
+
+### Not currently available
+
+- **Dual-camera (front + back) composite capture** is described in the
+  design history but is **not** implemented in this build. It is a
+  hardware-dependent future capability.
+
+---
+
+## Install
+
+Get the latest signed release from the
+[Releases page](https://github.com/Kvijay199428/VEGA-STING/releases/latest),
+and pick the asset named **`app-release.apk`**.
+
+```bash
+sha256sum app-release.apk
+# expect the value published in the release notes
+```
+
+The app requires Android 8.0 (API 26) or higher and targets API 35.
+
+Android will block a silent first install over a differently-signed build,
+so on a clean device you grant the "Install unknown apps" permission when
+prompted; subsequent in-app OTA updates install normally. **The release
+key is not in this repository** (see [Release signing](#release-signing)).
+
+---
+
+## How to use
+
+**First run.** The mandatory consent screen appears before any permission
+is requested, recording is reachable, or any network request is made.
+Read both documents ([Settings → Legal → Terms & Conditions / Privacy
+Policy](#legal)), acknowledge them, and tap **Accept & Continue**. No
+recordings are made until then.
+
+**Home screen.** The recordings are listed with their date, time, codec,
+resolution and size, filterable by the `[ ALL ]` / `VIDEO` / `AUDIO` chips
+and searchable with `SEARCH RECORDINGS...`. The four buttons at the
+bottom switch between **Video**, **Audio**, **Trash** and **Setup**.
+
+**Record.** Tap **Video** or **Audio** to start. While recording you get
+a live `REC ▸ VIDEO` / `REC ▸ AUDIO` indicator, elapsed time, codec and a
+file target. Tap **Stop** to finish; the file is added to the list.
+
+**Manage.** Long-press a row (or tap its checkbox) to enter selection
+mode. The bottom bar becomes **Share** / **Delete**, and **CLEAR ALL**,
+**SELECT ALL** appear in the header. Tapping a row outside selection mode
+opens playback. From playback you can share, trim or delete.
+
+**Trash.** Deleted items move to **Trash**, kept for **30 days**
+(`AUTO DELETE: 30 DAYS`) before a WorkManager sweep permanently removes
+them. Select items to **Restore** them to the library or **Delete** them
+immediately.
+
+**Settings** (`Setup` tab) groups hardware and storage choices —
+RECORDING (video size/ratio/codec, orientation), OVERLAY (signature /
+watermark), STORAGE (directory, SD/OTG), TRASH, HARDWARE, plus
+**Legal** and **About**. Under **About** → **Check For Updates** forces an
+unthrottled update check, and shows the version, build and developer.
+
+---
+
+## Tutorial
+
+<!-- TODO: Replace this placeholder with your tutorial video. GitHub READMEs cannot embed MP4/WebM directly — link a YouTube/Vimeo video or a GIF, e.g.:
+[![VEGA STING tutorial](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://youtu.be/VIDEO_ID)
+-->
+
+**▶ Watch the tutorial:** *link to your video goes here*
+(e.g. `https://youtu.be/…`).
+
+### Text walkthrough
+
+1. Accept the consent screen on first run.
+2. Tap **Video** or **Audio** to start a recording; the `REC ▸` indicator
+   and timer run.
+3. Tap **Stop**. The new file appears in the Home list with
+   resolution / codec / size.
+4. Long-press a file to select it, then **Share** or **Delete**.
+5. In **Trash**, select an item to **Restore** or **Delete**.
+6. In **Setup**, check legal docs, toggle the signature overlay, choose
+   storage, and tap **Check For Updates**.
+
+### Screenshots
+
+| Home | Recording | Selection |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/02-home.png" width="240" alt="Home screen"> | <img src="docs/screenshots/03-recording.png" width="240" alt="Recording"> | <img src="docs/screenshots/04-selection.png" width="240" alt="Selection mode"> |
+
+| Consent | Trash | Trash selection | Settings |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/01-consent.png" width="240" alt="Consent screen"> | <img src="docs/screenshots/05-trash.png" width="240" alt="Trash"> | <img src="docs/screenshots/06-trash-selection.png" width="240" alt="Trash selection"> | <img src="docs/screenshots/07-settings.png" width="240" alt="Settings"> |
+
+---
+
+## Privacy by design
+
+VEGA STING is local-first: recordings are stored on your device, the
+developer has no copy, and there is no recording cloud service. The app
+contains **no advertising SDK, no third-party analytics, and no
+third-party AI processing of recordings**. Recordings are not uploaded to
+authorities and are shared only if you choose to share them.
+
+The only network capability is the optional update check against public
+GitHub Releases; **recording content is never part of the update path**.
+Device/camera capability probing happens locally and is not transmitted.
+Local diagnostic/session notes remain on the device and are not the same
+as remote telemetry.
+
+Deleting recordings and using **Trash** / **Auto cleanup** is under your
+control.
+
+## Responsible & lawful use
+
+VEGA STING is a recording tool. The legality of recording another person
+varies by jurisdiction, context, consent and expectation of privacy: what
+the app permits, it does not judge. You are responsible for lawful use and
+for respecting privacy and consent requirements; the app is **not**
+intended to facilitate unlawful surveillance, stalking, harassment, or
+privacy violations. VEGA STING is **not** a substitute for police,
+ambulance, fire or emergency services.
+
+A recording does not guarantee the truth, admissibility, or authenticity
+of what it shows. Preserve originals carefully, avoid unnecessary edits,
+keep a clear record of when and how a recording was obtained, and consult
+a qualified legal professional where appropriate. See
+[`PRIVACY_POLICY.md`](PRIVACY_POLICY.md) and
+[`TERMS_AND_CONDITIONS.md`](TERMS_AND_CONDITIONS.md). This is not legal
+advice.
+
+---
+
+# Development
+
+Screen-recording terminal for Android. Black / orange / monospace UI,
+built with Kotlin, Jetpack Compose and CameraX.
 
 ## Project layout
 
@@ -164,3 +385,14 @@ missing segments, invalid input), release-JSON parsing (APK selection, missing
 fields, explicit JSON nulls, malformed input) and legal consent completeness
 (half-acceptance, version mismatch, re-consent triggers). These are the parts most
 likely to break OTA updates and consent enforcement silently.
+
+---
+
+<p align="center">
+  <img src=".assets/VOS.png" width="64" alt="VOS logo" />
+  <br/>
+  <strong>VEGA STING — Your device. Your recording. Your decision.</strong>
+  <br/>
+  Developer: <a href="https://app.vijaykrsha.online">VIJAYKRSHA.ONLINE</a>
+  · Package: <code>com.vega.sting</code>
+</p>

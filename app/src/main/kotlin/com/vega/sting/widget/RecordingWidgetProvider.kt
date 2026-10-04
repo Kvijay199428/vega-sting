@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.TypedValue
 import android.widget.RemoteViews
+import kotlin.math.roundToInt
 import com.vega.sting.R
 import com.vega.sting.services.RecordingService
 
@@ -22,6 +23,19 @@ class RecordingWidgetProvider : AppWidgetProvider() {
             for (widgetId in appWidgetIds) {
                 updateWidget(context, appWidgetManager, widgetId)
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle
+    ) {
+        try {
+            updateWidget(context, appWidgetManager, appWidgetId)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -113,13 +127,6 @@ class RecordingWidgetProvider : AppWidgetProvider() {
                     dp(context, sizing.rootPaddingDp),
                     dp(context, sizing.rootPaddingDp)
                 )
-                views.setViewPadding(
-                    R.id.buttonPanel,
-                    dp(context, sizing.panelPaddingDp),
-                    dp(context, sizing.panelPaddingDp),
-                    dp(context, sizing.panelPaddingDp),
-                    dp(context, sizing.panelPaddingDp)
-                )
 
                 views.setOnClickPendingIntent(
                     R.id.btnLeft,
@@ -142,25 +149,17 @@ class RecordingWidgetProvider : AppWidgetProvider() {
             widgetId: Int
         ): WidgetSizing {
             val options = manager.getAppWidgetOptions(widgetId)
-            val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 220)
-            val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 220)
-            val shortSide = minOf(width, height).coerceAtLeast(1).toFloat()
+            val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 120)
+            return sizingForHeight(height.toFloat())
+        }
 
-            return when {
-                shortSide >= 130f -> WidgetSizing(
-                    rootPaddingDp = 8,
-                    panelPaddingDp = 3,
-                    titleSp = 14f,
-                    buttonSp = 10f
-                )
-
-                else -> WidgetSizing(
-                    rootPaddingDp = 6,
-                    panelPaddingDp = 2,
-                    titleSp = 14f,
-                    buttonSp = 10f
-                )
-            }
+        internal fun sizingForHeight(heightDp: Float): WidgetSizing {
+            val t = ((heightDp - 120f) / 120f).coerceIn(0f, 1f)
+            return WidgetSizing(
+                rootPaddingDp = 6 + (2 * t).roundToInt(),
+                titleSp = 14f + 6f * t,
+                buttonSp = 11f + 5f * t
+            )
         }
 
         private fun dp(context: Context, value: Int): Int {
@@ -201,9 +200,8 @@ private data class WidgetModel(
     val rightAction: String
 )
 
-private data class WidgetSizing(
+internal data class WidgetSizing(
     val rootPaddingDp: Int,
-    val panelPaddingDp: Int,
     val titleSp: Float,
     val buttonSp: Float
 )

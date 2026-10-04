@@ -28,15 +28,15 @@ android {
         applicationId = "com.vega.sting"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.4"
 
         
         
         buildConfigField("String", "GITHUB_OWNER", "\"Kvijay199428\"")
         buildConfigField("String", "GITHUB_REPO", "\"VEGA-STING\"")
         buildConfigField("String", "GITHUB_REPO_URL", "\"https://github.com/Kvijay199428/VEGA-STING\"")
-        buildConfigField("String", "DEV_NAME", "\"vijay kumar sharma\"")
+        buildConfigField("String", "DEV_NAME", "\"VIJAYKRSHA.ONLINE\"")
         buildConfigField("String", "DEV_WEBSITE", "\"https://app.vijaykrsha.online\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

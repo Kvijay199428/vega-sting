@@ -8,8 +8,8 @@ package com.vega.sting.legal
  */
 
 /** Document versions bundled with this build. */
-const val TERMS_VERSION = "1.0"
-const val PRIVACY_POLICY_VERSION = "1.0"
+const val TERMS_VERSION = "1.1"
+const val PRIVACY_POLICY_VERSION = "1.1"
 
 const val TERMS_URL =
     "https://github.com/Kvijay199428/VEGA-STING/blob/main/TERMS_AND_CONDITIONS.md"

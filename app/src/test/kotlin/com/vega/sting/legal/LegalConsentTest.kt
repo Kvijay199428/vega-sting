@@ -74,7 +74,7 @@ class LegalConsentTest {
 
     @Test
     fun `newer accepted version is rejected because the bundled copy is older`() {
-        assertFalse(accepted(termsVersion = "1.1").isComplete)
+        assertFalse(accepted(termsVersion = "1.2").isComplete)
     }
 
     @Test
@@ -85,9 +85,9 @@ class LegalConsentTest {
     // ---- shipped versions ----
 
     @Test
-    fun `shipped document versions are 1_0`() {
-        assertEquals("1.0", TERMS_VERSION)
-        assertEquals("1.0", PRIVACY_POLICY_VERSION)
+    fun `shipped document versions are 1_1`() {
+        assertEquals("1.1", TERMS_VERSION)
+        assertEquals("1.1", PRIVACY_POLICY_VERSION)
     }
 
     // ---- predicate is independent of the state wrapper ----

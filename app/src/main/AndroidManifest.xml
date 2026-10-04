@@ -31,7 +31,7 @@
         android:theme="@style/Theme.VEGASTING">
         <meta-data
             android:name="developer_name"
-            android:value="vijay kumar sharma" />
+            android:value="VIJAYKRSHA.ONLINE" />
         <meta-data
             android:name="developer_website"
             android:value="https://app.vijaykrsha.online" />

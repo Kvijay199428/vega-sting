@@ -1,14 +1,14 @@
 VEGA STING - TERMS AND CONDITIONS
 
 Effective Date: 29 September 2026
-Developer: VEGA STING / VEGA SOL
+Developer: VIJAYKRSHA.ONLINE
 Package Name: com.vega.sting
-Document Version: 1.0
+Document Version: 1.1
 
 
 PREAMBLE
 
-These Terms and Conditions govern your use of the VEGA STING mobile application (the "Application"), developed and published by VEGA STING / VEGA SOL ("the Developer"). By installing, downloading, or using the Application, you agree to be bound by these Terms and Conditions. If you do not agree with any part of these Terms, you must not use the Application.
+These Terms and Conditions govern your use of the VEGA STING mobile application (the "Application"), developed and published by VIJAYKRSHA.ONLINE ("the Developer"). By installing, downloading, or using the Application, you agree to be bound by these Terms and Conditions. If you do not agree with any part of these Terms, you must not use the Application.
 
 
 1. ACCEPTANCE OF TERMS

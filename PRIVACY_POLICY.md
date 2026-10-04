@@ -1,9 +1,9 @@
 # VEGA STING — Privacy Policy
 
 **Effective Date:** 29 September 2026
-**Developer:** VEGA STING / VEGA SOL
+**Developer:** VIJAYKRSHA.ONLINE
 **Package Name:** `com.vega.sting`
-**Document Version:** 1.0
+**Document Version:** 1.1
 
 ---
 

@@ -259,7 +259,7 @@ Requirements:
 Build outputs:
 
 - Debug: `app/build/outputs/apk/debug/app-debug.apk`
-- Release: `app/build/outputs/apk/release/app-release.apk`
+- Release: `app/build/outputs/apk/release/vega-sting-<versionName>.apk`
 
 `assembleRelease` runs the `verifyReleaseSigning` guard first. If release-signing
 properties are missing, the build fails with a clear message instead of silently
@@ -295,7 +295,7 @@ build must be installed manually:
 
 ```powershell
 adb uninstall com.vega.sting
-adb install app/build/outputs/apk/release/app-release.apk
+adb install app/build/outputs/apk/release/vega-sting-<versionName>.apk
 ```
 
 **Do this before the first release update.** After that, OTA updates keep the

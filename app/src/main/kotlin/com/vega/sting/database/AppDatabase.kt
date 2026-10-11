@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [Recording::class, CameraSessionTelemetry::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -66,6 +66,37 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration from v3 → v4: adds recording-session metadata to
+         * `recordings` so split parts can be grouped, recovered and finalised
+         * idempotently.
+         *
+         * Every new column has a NOT NULL default or is nullable, so existing
+         * rows (including those already in Trash) are preserved untouched and
+         * simply read as standalone recordings: `sessionId` stays NULL, which
+         * SQLite treats as distinct under the unique index, so several legacy
+         * rows can coexist.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recordings ADD COLUMN sessionId TEXT")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN partIndex INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN segmentStatus TEXT NOT NULL DEFAULT 'FINALIZED'")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN startedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN endedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN finalizationReason TEXT")
+                db.execSQL("ALTER TABLE recordings ADD COLUMN isSessionComplete INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recordings_sessionId ON recordings(sessionId)")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_recordings_sessionId_partIndex " +
+                        "ON recordings(sessionId, partIndex)"
+                )
+            }
+        }
+
+        /** Every migration, exposed for instrumentation migration tests. */
+        fun migrations(): Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -73,7 +104,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "vega_sting_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

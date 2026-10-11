@@ -23,6 +23,7 @@ import com.vega.sting.camera.VideoPreference
 import com.vega.sting.camera.resolveEffectiveVideoCodec
 import com.vega.sting.database.AppDatabase
 import com.vega.sting.database.CameraSessionTelemetry
+import com.vega.sting.database.FinalizationReason
 import com.vega.sting.orientation.OrientationManager
 import com.vega.sting.overlay.OverlayPosition
 import com.vega.sting.overlay.OverlayRenderer
@@ -51,6 +52,32 @@ data class ActiveRecordingSpec(
     }
 }
 
+/** Callbacks the [RecordingService] uses to follow a video session. */
+interface VideoRecordingListener {
+    fun onSegmentStarted(file: File, partIndex: Int, spec: ActiveRecordingSpec)
+
+    fun onSegmentFinalized(
+        file: File,
+        partIndex: Int,
+        reason: FinalizationReason,
+        gapPossible: Boolean
+    )
+
+    fun onRecorderError(message: String)
+
+    /** The whole session has ended (after `stopRecording` or an unrecoverable error). */
+    fun onRecordingFinalized(reason: FinalizationReason, error: String?)
+}
+
+/**
+ * Camera2/MediaRecorder video pipeline that can roll over into sequential parts.
+ *
+ * Rotation is delegated to the platform via [MediaRecorder.setMaxFileSize] and
+ * [MediaRecorder.setNextOutputFile], so the camera capture session and the
+ * overlay surface stay alive across parts. When the device cannot arm a next
+ * output file the pipeline is rebuilt on the same camera device and the segment
+ * is flagged as possibly having a gap.
+ */
 class RecordingManager(private val context: Context) {
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
@@ -61,27 +88,46 @@ class RecordingManager(private val context: Context) {
     private var isRecording = false
 
     private val mainExecutor = ContextCompat.getMainExecutor(context)
-    private var onFinalizeCallback: ((String?) -> Unit)? = null
+
 
     private val orientationManager = OrientationManager(context)
 
-    
+
     private val profileManager = DeviceProfileManager(context)
     private val telemetryDao = AppDatabase.getDatabase(context).cameraSessionTelemetryDao()
     private val fallbackEngine = DynamicFallbackEngine(telemetryDao)
 
-    
+
     private var activePreset: RecordingPreset? = null
-    
+
     private var activeCameraId: String? = null
-    
+
     private var recordingStartTime: Long = 0L
+
+    // ---- Session / segmentation state ---------------------------------------
+    private var videoListener: VideoRecordingListener? = null
+    private var session: RecordingSession? = null
+    private var recordingDirectory: File? = null
+    private var segmentLimitBytes: Long = 0L
+    private var splitEnabled = false
+    private var partIndex = 0
+    private var activeSegmentFile: File? = null
+    private var seamlessRotation = true
+    private var rotationInProgress = false
+    private var stoppingSession = false
+    private var gapPossible = false
+
+    // Config resolved once and reused for every part of the session.
+    private var activeCharacteristics: CameraCharacteristics? = null
+    private var resolvedRotationDegrees = 0
+    private var resolvedAudioSampleRate = 44100
+    private var resolvedAudioChannels = 1
+    private var resolvedOverlaySettings: OverlaySettings? = null
 
     companion object {
         private const val TAG = "RecordingManager"
 
-        
-        
+
         private const val ORIENTATION_OFFSET_DEGREES = 0
 
         fun generateFileName(isAudio: Boolean): String {
@@ -93,12 +139,26 @@ class RecordingManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun startVideoRecording(
-        outputFile: File,
+        directory: File,
+        session: RecordingSession,
         orientationMode: String,
-        onStart: (ActiveRecordingSpec) -> Unit,
-        onFinalize: (String?) -> Unit
+        segmentLimitBytes: Long,
+        splitEnabled: Boolean,
+        listener: VideoRecordingListener
     ) {
-        onFinalizeCallback = onFinalize
+        this.videoListener = listener
+        this.session = session
+        this.recordingDirectory = directory
+        this.segmentLimitBytes = segmentLimitBytes
+        this.splitEnabled = splitEnabled
+        this.partIndex = session.startPartIndex.coerceAtLeast(1)
+        this.activeSegmentFile = RecordingSessionManager.partFile(directory, session, partIndex)
+        this.seamlessRotation = true
+        this.rotationInProgress = false
+        this.stoppingSession = false
+        this.gapPossible = false
+        this.recordingStartTime = 0L
+
         startBackgroundThread()
         orientationManager.start()
 
@@ -117,7 +177,7 @@ class RecordingManager(private val context: Context) {
                 cameraIdToUse = cameraManager.cameraIdList.firstOrNull()
             }
             if (cameraIdToUse == null) {
-                mainExecutor.execute { onFinalize("No camera found") }
+                fail("No camera found")
                 return
             }
 
@@ -126,62 +186,44 @@ class RecordingManager(private val context: Context) {
             cameraManager.openCamera(cameraIdToUse, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
                     cameraDevice = camera
-                    startRecordingSession(camera, outputFile, orientationMode, onStart, onFinalize)
+                    prepareSession(camera, orientationMode)
                 }
 
                 override fun onDisconnected(camera: CameraDevice) {
                     camera.close()
                     cameraDevice = null
                     logTelemetry(success = false, failureReason = "Camera disconnected")
-                    mainExecutor.execute { onFinalize("Camera disconnected") }
+                    fail("Camera disconnected")
                 }
 
                 override fun onError(camera: CameraDevice, error: Int) {
                     camera.close()
                     cameraDevice = null
                     logTelemetry(success = false, failureReason = "Camera open error: $error")
-                    mainExecutor.execute { onFinalize("Camera open error: $error") }
+                    fail("Camera open error: $error")
                 }
             }, backgroundHandler)
 
         } catch (e: Exception) {
             e.printStackTrace()
             logTelemetry(success = false, failureReason = e.message)
-            mainExecutor.execute { onFinalize(e.message) }
+            fail(e.message ?: "Camera open failed")
         }
     }
 
-    private fun startRecordingSession(
-        camera: CameraDevice,
-        outputFile: File,
-        orientationMode: String,
-        onStart: (ActiveRecordingSpec) -> Unit,
-        onFinalize: (String?) -> Unit
-    ) {
+    /** Resolves rotation/preset/audio/overlay once, then starts the first part. */
+    private fun prepareSession(camera: CameraDevice, orientationMode: String) {
         try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val characteristics = cameraManager.getCameraCharacteristics(camera.id)
+            activeCharacteristics = characteristics
 
             val deviceRotation = when (orientationMode) {
-
-                "PORTRAIT" -> {
-                    Surface.ROTATION_0
-                }
-
-                "LANDSCAPE" -> {
-                    Surface.ROTATION_90
-                }
-
-                else -> {
-                    
-                    
-                    orientationManager.settledRotation()
-                }
+                "PORTRAIT" -> Surface.ROTATION_0
+                "LANDSCAPE" -> Surface.ROTATION_90
+                else -> orientationManager.settledRotation()
             }
 
-            
-            
-            
             val sensorOrientation = characteristics.get(
                 CameraCharacteristics.SENSOR_ORIENTATION
             ) ?: 0
@@ -201,139 +243,316 @@ class RecordingManager(private val context: Context) {
             } else {
                 (sensorOrientation - deviceRotationDegrees + 360) % 360
             }
-            val cameraRotationDegrees =
-                (rawRotationDegrees + 360 + ORIENTATION_OFFSET_DEGREES) % 360
+            resolvedRotationDegrees = (rawRotationDegrees + 360 + ORIENTATION_OFFSET_DEGREES) % 360
             Log.i(TAG, "Rotation: sensorOrientation=$sensorOrientation mode=$orientationMode " +
                     "deviceRot=$deviceRotation degrees=$deviceRotationDegrees front=$isFrontFacing " +
-                    "raw=$rawRotationDegrees offset=$ORIENTATION_OFFSET_DEGREES hint=$cameraRotationDegrees")
+                    "raw=$rawRotationDegrees offset=$ORIENTATION_OFFSET_DEGREES hint=$resolvedRotationDegrees")
 
-            
             val profile = try { profileManager.getProfile() } catch (e: Exception) { null }
             val requestedCodec = loadRequestedCodec()
             val videoPreference = loadVideoPreference()
             val preset = resolvePreset(characteristics, profile, requestedCodec, videoPreference)
             activePreset = preset
-            val videoWidth = preset.width
-            val videoHeight = preset.height
-            Log.i(TAG, "Using adaptive preset: ${videoWidth}x${videoHeight}@${preset.fps} " +
+            Log.i(TAG, "Using adaptive preset: ${preset.width}x${preset.height}@${preset.fps} " +
                     "bitrate=${preset.bitrate} codec=${preset.codec} score=${preset.score}")
 
             val (audioSampleRate, audioChannels) = resolveAudioConfig(profile)
+            resolvedAudioSampleRate = audioSampleRate
+            resolvedAudioChannels = audioChannels
+            resolvedOverlaySettings = loadOverlaySettings()
 
-            val overlaySettings = loadOverlaySettings()
+            startPipeline(camera)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            logTelemetry(success = false, failureReason = "Session config error: ${e.message}")
+            fail("Session config error: ${e.message}")
+        }
+    }
 
-            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(context)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }.apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                setVideoSource(MediaRecorder.VideoSource.SURFACE)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setOutputFile(outputFile.absolutePath)
-                
-                setVideoEncodingBitRate(preset.bitrate)
-                setVideoFrameRate(preset.fps)
-                setVideoSize(videoWidth, videoHeight)
-                setVideoEncoder(
-                    if (preset.codec == "HEVC") {
-                        MediaRecorder.VideoEncoder.HEVC
-                    } else {
-                        MediaRecorder.VideoEncoder.H264
-                    }
-                )
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(audioSampleRate)
-                setAudioChannels(audioChannels)
-                
-                setOrientationHint(cameraRotationDegrees)
-                prepare()
-            }
+    /** Builds the recorder + overlay + capture session for [activeSegmentFile]. */
+    private fun startPipeline(camera: CameraDevice) {
+        val preset = activePreset
+        val file = activeSegmentFile
+        val characteristics = activeCharacteristics
+        if (preset == null || file == null || characteristics == null) {
+            fail("Recording pipeline not fully configured")
+            return
+        }
+        try {
+            val recorder = createRecorder(preset, file)
+            mediaRecorder = recorder
 
-            val recorderSurface: Surface = mediaRecorder!!.surface
-            overlayRenderer = OverlayRenderer(
+            val recorderSurface: Surface = recorder.surface
+            val overlay = OverlayRenderer(
                 recorderSurface = recorderSurface,
-                width = videoWidth,
-                height = videoHeight,
-                settings = overlaySettings,
+                width = preset.width,
+                height = preset.height,
+                settings = resolvedOverlaySettings ?: OverlaySettings(),
                 scaledDensity = context.resources.displayMetrics.density * context.resources.configuration.fontScale,
-                rotationHint = cameraRotationDegrees,
+                rotationHint = resolvedRotationDegrees,
                 renderHandler = backgroundHandler ?: Handler(android.os.Looper.getMainLooper())
             )
-            val overlaySurface = overlayRenderer!!.start()
-            val surfaces = listOf(overlaySurface)
+            overlayRenderer = overlay
+            val overlaySurface = overlay.start()
 
             val captureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
             captureRequestBuilder.addTarget(overlaySurface)
-
-            
             applyAdaptiveControls(captureRequestBuilder, characteristics, preset)
 
             @Suppress("DEPRECATION")
-            camera.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
+            camera.createCaptureSession(listOf(overlaySurface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
                     captureSession = session
                     try {
                         session.setRepeatingRequest(captureRequestBuilder.build(), null, backgroundHandler)
-                        mediaRecorder?.start()
+                        recorder.start()
                         isRecording = true
-                        recordingStartTime = System.currentTimeMillis()
-                        mainExecutor.execute { onStart(ActiveRecordingSpec.fromPreset(preset)) }
+                        if (recordingStartTime == 0L) recordingStartTime = System.currentTimeMillis()
+                        val startedFile = activeSegmentFile ?: file
+                        val startedIndex = partIndex
+                        val spec = ActiveRecordingSpec.fromPreset(preset)
+                        mainExecutor.execute {
+                            videoListener?.onSegmentStarted(startedFile, startedIndex, spec)
+                        }
                     } catch (e: Exception) {
                         e.printStackTrace()
-                        closeCamera()
                         logTelemetry(success = false, failureReason = "Session config error: ${e.message}")
-                        mainExecutor.execute { onFinalize("Session config error: ${e.message}") }
+                        fail("Session config error: ${e.message}")
                     }
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
-                    closeCamera()
                     logTelemetry(success = false, failureReason = "Failed to configure capture session")
-                    mainExecutor.execute { onFinalize("Failed to configure capture session") }
+                    fail("Failed to configure capture session")
                 }
             }, backgroundHandler)
 
         } catch (e: Exception) {
             e.printStackTrace()
-            closeCamera()
             logTelemetry(success = false, failureReason = e.message)
-            mainExecutor.execute { onFinalize(e.message) }
+            fail(e.message ?: "Recorder start failed")
         }
     }
 
-    fun stopRecording() {
-        if (isRecording) {
-            
-            
-            try {
-                captureSession?.stopRepeating()
-            } catch (_: Exception) {}
-
-            try {
-                mediaRecorder?.stop()
-            } catch (_: Exception) {}
-
-            try {
-                captureSession?.close()
-            } catch (_: Exception) {}
-
-            isRecording = false
-            
-            logTelemetry(success = true, failureReason = null)
-            val callback = onFinalizeCallback
-            mainExecutor.execute { callback?.invoke(null) }
+    private fun createRecorder(preset: RecordingPreset, file: File): MediaRecorder {
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(context)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
         }
+        recorder.apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setVideoSource(MediaRecorder.VideoSource.SURFACE)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setOutputFile(file.absolutePath)
+
+            setVideoEncodingBitRate(preset.bitrate)
+            setVideoFrameRate(preset.fps)
+            setVideoSize(preset.width, preset.height)
+            setVideoEncoder(
+                if (preset.codec == "HEVC") {
+                    MediaRecorder.VideoEncoder.HEVC
+                } else {
+                    MediaRecorder.VideoEncoder.H264
+                }
+            )
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setAudioSamplingRate(resolvedAudioSampleRate)
+            setAudioChannels(resolvedAudioChannels)
+
+            setOrientationHint(resolvedRotationDegrees)
+            if (splitEnabled && segmentLimitBytes > 0L) {
+                setMaxFileSize(segmentLimitBytes)
+                setOnInfoListener { _, what, _ -> handleInfo(what) }
+            }
+            prepare()
+            if (splitEnabled && segmentLimitBytes > 0L) {
+                armNextOutputFile(this, partIndex + 1)
+            }
+        }
+        return recorder
+    }
+
+    private fun armNextOutputFile(target: MediaRecorder, nextIndex: Int) {
+        val dir = recordingDirectory ?: return
+        val s = session ?: return
+        val nextFile = RecordingSessionManager.partFile(dir, s, nextIndex)
+        try {
+            target.setNextOutputFile(nextFile)
+        } catch (e: Exception) {
+            Log.w(TAG, "setNextOutputFile unavailable; video rotation falls back to pipeline restart", e)
+            seamlessRotation = false
+        }
+    }
+
+    private fun handleInfo(what: Int) {
+        when (what) {
+            MediaRecorder.MEDIA_RECORDER_INFO_NEXT_OUTPUT_FILE_STARTED -> {
+                if (!rotationInProgress && !stoppingSession) rotateSeamlessly()
+            }
+            MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED -> {
+                // Only rebuild when the current part really is at the limit; a
+                // spurious event right after a seamless rollover lands on a
+                // freshly opened (near-empty) file and is ignored.
+                val grown = segmentLimitBytes > 0L &&
+                    (activeSegmentFile?.length() ?: 0L) >= segmentLimitBytes / 2
+                if (!rotationInProgress && !stoppingSession && grown) {
+                    rotateByRebuild()
+                }
+            }
+        }
+    }
+
+    /** The recorder already switched output files by itself. */
+    private fun rotateSeamlessly() {
+        rotationInProgress = true
+        try {
+            val finalized = activeSegmentFile
+            val finalizedIndex = partIndex
+            if (finalized != null) {
+                notifyFinalized(finalized, finalizedIndex, FinalizationReason.SIZE_LIMIT)
+            }
+            partIndex = finalizedIndex + 1
+            val dir = recordingDirectory ?: return
+            val s = session ?: return
+            activeSegmentFile = RecordingSessionManager.partFile(dir, s, partIndex)
+            notifyStarted()
+            mediaRecorder?.let { if (seamlessRotation) armNextOutputFile(it, partIndex + 1) }
+        } finally {
+            rotationInProgress = false
+        }
+    }
+
+    /** Rebuild the pipeline on the same camera device when rotation is unsupported. */
+    private fun rotateByRebuild() {
+        rotationInProgress = true
+        try {
+            val finalized = activeSegmentFile
+            val finalizedIndex = partIndex
+            gapPossible = true
+            teardownPipeline()
+            if (finalized != null) {
+                notifyFinalized(finalized, finalizedIndex, FinalizationReason.SIZE_LIMIT)
+            }
+            if (stoppingSession) return
+            partIndex = finalizedIndex + 1
+            val dir = recordingDirectory ?: return
+            val s = session ?: return
+            activeSegmentFile = RecordingSessionManager.partFile(dir, s, partIndex)
+            cameraDevice?.let { startPipeline(it) }
+        } finally {
+            rotationInProgress = false
+        }
+    }
+
+    private fun notifyStarted() {
+        val file = activeSegmentFile ?: return
+        val index = partIndex
+        val preset = activePreset ?: return
+        val listener = videoListener ?: return
+        val spec = ActiveRecordingSpec.fromPreset(preset)
+        mainExecutor.execute { listener.onSegmentStarted(file, index, spec) }
+    }
+
+    private fun notifyFinalized(file: File, index: Int, reason: FinalizationReason) {
+        val gap = gapPossible
+        // Capture the listener now: [stopRecording]/[fail] clear the field
+        // before this callback runs on the main thread.
+        val listener = videoListener ?: return
+        mainExecutor.execute { listener.onSegmentFinalized(file, index, reason, gap) }
+    }
+
+    fun stopRecording(reason: FinalizationReason = FinalizationReason.MANUAL_STOP) {
+        if (stoppingSession) return
+        stoppingSession = true
+
+        val finalized = activeSegmentFile
+        val finalizedIndex = partIndex
+
+        try {
+            captureSession?.stopRepeating()
+        } catch (_: Exception) {}
+
+        var stoppedCleanly = true
+        try {
+            mediaRecorder?.stop()
+        } catch (e: Exception) {
+            stoppedCleanly = false
+        }
+
+        try {
+            captureSession?.close()
+        } catch (_: Exception) {}
+
+        isRecording = false
+        logTelemetry(
+            success = stoppedCleanly,
+            failureReason = if (stoppedCleanly) null else "Recorder stop failed"
+        )
+
+        if (finalized != null) {
+            val effectiveReason =
+                if (stoppedCleanly && finalized.length() > 0L) reason else FinalizationReason.ERROR
+            notifyFinalized(finalized, finalizedIndex, effectiveReason)
+        }
+
         orientationManager.stop()
         closeCamera()
         stopBackgroundThread()
+
+        val listener = videoListener
+        val error = if (stoppedCleanly) null else "Recorder stop failed"
+        mainExecutor.execute { listener?.onRecordingFinalized(reason, error) }
+
+        videoListener = null
+        session = null
+        activeSegmentFile = null
     }
 
-    
+    private fun teardownPipeline() {
+        try {
+            captureSession?.stopRepeating()
+        } catch (_: Exception) {}
+        try {
+            captureSession?.close()
+        } catch (_: Exception) {}
+        captureSession = null
+        overlayRenderer?.release()
+        overlayRenderer = null
+        try {
+            mediaRecorder?.stop()
+        } catch (_: Exception) {}
+        try {
+            mediaRecorder?.release()
+        } catch (_: Exception) {}
+        mediaRecorder = null
+        isRecording = false
+    }
+
+    /** Reports an unrecoverable error and tears the session down. */
+    private fun fail(message: String) {
+        val listener = videoListener
+        val finalized = activeSegmentFile
+        val finalizedIndex = partIndex
+        mainExecutor.execute { listener?.onRecorderError(message) }
+        closeCamera()
+        stopBackgroundThread()
+        orientationManager.stop()
+        if (finalized != null && finalized.length() > 0L) {
+            notifyFinalized(finalized, finalizedIndex, FinalizationReason.ERROR)
+        }
+        mainExecutor.execute { listener?.onRecordingFinalized(FinalizationReason.ERROR, message) }
+        videoListener = null
+        session = null
+        activeSegmentFile = null
+    }
+
     fun reset() {
         isRecording = false
-        onFinalizeCallback = null
+        videoListener = null
+        session = null
+        activeSegmentFile = null
         activePreset = null
         activeCameraId = null
         recordingStartTime = 0L
@@ -391,9 +610,6 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    
-
-    
     private fun resolvePreset(
         characteristics: CameraCharacteristics,
         profile: DeviceProfile?,
@@ -402,7 +618,6 @@ class RecordingManager(private val context: Context) {
     ): RecordingPreset {
         return try {
             if (profile != null) {
-                
                 val preset = runBlocking {
                     fallbackEngine.selectSafePreset(
                         profile = profile,
@@ -412,7 +627,6 @@ class RecordingManager(private val context: Context) {
                 }
                 preset.copy(codec = resolveVideoCodec(profile, requestedCodec))
             } else {
-                
                 Log.w(TAG, "No device profile available, using characteristics-based selection")
                 selectFromCharacteristics(characteristics, preference)
             }
@@ -422,7 +636,6 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    
     private fun resolveVideoCodec(
         profile: DeviceProfile,
         requestedCodec: String
@@ -434,7 +647,6 @@ class RecordingManager(private val context: Context) {
         return codec
     }
 
-    
     private fun resolveAudioConfig(profile: DeviceProfile?): Pair<Int, Int> {
         val aac = profile
             ?.encoders
@@ -468,7 +680,6 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    
     private fun loadVideoPreference(): VideoPreference {
         val displayAspect = try {
             val w = context.resources.displayMetrics.widthPixels
@@ -491,7 +702,6 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    
     private fun selectFromCharacteristics(
         characteristics: CameraCharacteristics,
         preference: VideoPreference
@@ -529,7 +739,6 @@ class RecordingManager(private val context: Context) {
         return ranges.any { it.upper >= fps }
     }
 
-    
     private fun selectVideoSize(
         characteristics: CameraCharacteristics,
         preference: VideoPreference
@@ -548,7 +757,6 @@ class RecordingManager(private val context: Context) {
 
         if (supportedSizes.isEmpty()) return defaultSize
 
-        
         val aspectChoices = buildList {
             when (preference.ratio) {
                 "16:9" -> add(16f / 9f)
@@ -556,7 +764,6 @@ class RecordingManager(private val context: Context) {
                 "1:1" -> add(1f)
                 "DISPLAY" -> add(preference.displayAspect)
                 else -> {
-                    
                     add(preference.displayAspect)
                     add(16f / 9f)
                 }
@@ -572,7 +779,6 @@ class RecordingManager(private val context: Context) {
             }
         }
 
-        
         val relaxed = supportedSizes.filter { it.width <= requestedWidth }
         return (if (relaxed.isNotEmpty()) relaxed else supportedSizes)
             .maxWithOrNull(compareBy { it.width * it.height })
@@ -586,7 +792,7 @@ class RecordingManager(private val context: Context) {
             "1440P" -> 2560
             "4K" -> 3840
             "1080P" -> 1920
-            else -> 1920 
+            else -> 1920
         }
     }
 
@@ -597,13 +803,11 @@ class RecordingManager(private val context: Context) {
             kotlin.math.abs(inverted - target) <= 0.05f
     }
 
-    
     private fun applyAdaptiveControls(
         builder: CaptureRequest.Builder,
         characteristics: CameraCharacteristics,
         preset: RecordingPreset
     ) {
-        
         if (preset.videoStabilization) {
             val availableVideoStab = characteristics.get(
                 CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES
@@ -616,7 +820,6 @@ class RecordingManager(private val context: Context) {
             }
         }
 
-        
         if (preset.opticalStabilization) {
             val availableOpticalStab = characteristics.get(
                 CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION
@@ -629,7 +832,6 @@ class RecordingManager(private val context: Context) {
             }
         }
 
-        
         val nrModes = characteristics.get(
             CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES
         )
@@ -637,7 +839,6 @@ class RecordingManager(private val context: Context) {
             builder.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_FAST)
         }
 
-        
         val edgeModes = characteristics.get(
             CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES
         )
@@ -645,7 +846,6 @@ class RecordingManager(private val context: Context) {
             builder.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_FAST)
         }
 
-        
         val afModes = characteristics.get(
             CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES
         )
@@ -654,7 +854,6 @@ class RecordingManager(private val context: Context) {
         }
     }
 
-    
     private fun logTelemetry(success: Boolean, failureReason: String?) {
         val preset = activePreset ?: return
         val duration = if (recordingStartTime > 0) {

@@ -3,6 +3,7 @@ package com.vega.sting.settings
 import android.content.Context
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.vega.sting.storage.StoragePolicy
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -28,6 +29,14 @@ class SettingsManager(private val context: Context) {
         val ORIENTATION_MODE = stringPreferencesKey("orientation_mode")
         val SORT_TYPE = stringPreferencesKey("sort_type")
         val SORT_ORDER = stringPreferencesKey("sort_order")
+
+        // FILE SIZE & STORAGE SAFETY
+        val SPLIT_RECORDING_ENABLED = booleanPreferencesKey("split_recording_enabled")
+        val VIDEO_SEGMENT_LIMIT_BYTES = longPreferencesKey("video_segment_limit_bytes")
+        val AUDIO_SEGMENT_LIMIT_BYTES = longPreferencesKey("audio_segment_limit_bytes")
+        val MINIMUM_FREE_SPACE_BYTES = longPreferencesKey("minimum_free_space_bytes")
+        val LOW_STORAGE_WARNING_BYTES = longPreferencesKey("low_storage_warning_bytes")
+        val AUDIO_FALLBACK_ENABLED = booleanPreferencesKey("audio_fallback_enabled")
     }
 
     val videoCodec: Flow<String> = context.dataStore.data.map { it[VIDEO_CODEC] ?: "H.265" }
@@ -48,6 +57,42 @@ class SettingsManager(private val context: Context) {
     val orientationMode: Flow<String> = context.dataStore.data.map { it[ORIENTATION_MODE] ?: "FOLLOW_SENSOR" }
     val sortType: Flow<String> = context.dataStore.data.map { it[SORT_TYPE] ?: "DATE" }
     val sortOrder: Flow<String> = context.dataStore.data.map { it[SORT_ORDER] ?: "DESC" }
+
+    val splitRecordingEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[SPLIT_RECORDING_ENABLED] ?: true }
+    val videoSegmentLimitBytes: Flow<Long> = context.dataStore.data.map {
+        StoragePolicy.clampSegmentLimit(it[VIDEO_SEGMENT_LIMIT_BYTES] ?: RecordingSettings.DEFAULTS.videoSegmentLimitBytes)
+    }
+    val audioSegmentLimitBytes: Flow<Long> = context.dataStore.data.map {
+        StoragePolicy.clampSegmentLimit(it[AUDIO_SEGMENT_LIMIT_BYTES] ?: RecordingSettings.DEFAULTS.audioSegmentLimitBytes)
+    }
+    val minimumFreeSpaceBytes: Flow<Long> = context.dataStore.data.map {
+        StoragePolicy.clampReserve(it[MINIMUM_FREE_SPACE_BYTES] ?: RecordingSettings.DEFAULTS.minimumFreeSpaceBytes)
+    }
+    val lowStorageWarningBytes: Flow<Long> = context.dataStore.data.map {
+        (it[LOW_STORAGE_WARNING_BYTES] ?: RecordingSettings.DEFAULTS.lowStorageWarningBytes)
+            .coerceAtLeast(StoragePolicy.MIN_RESERVE_BYTES)
+    }
+    val audioFallbackEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[AUDIO_FALLBACK_ENABLED] ?: true }
+
+    /** One consistent snapshot of every storage-safety preference. */
+    val recordingSettings: Flow<RecordingSettings> = context.dataStore.data.map { prefs ->
+        RecordingSettings.sanitize(
+            RecordingSettings(
+                splitRecordingEnabled = prefs[SPLIT_RECORDING_ENABLED] ?: true,
+                videoSegmentLimitBytes = prefs[VIDEO_SEGMENT_LIMIT_BYTES]
+                    ?: RecordingSettings.DEFAULTS.videoSegmentLimitBytes,
+                audioSegmentLimitBytes = prefs[AUDIO_SEGMENT_LIMIT_BYTES]
+                    ?: RecordingSettings.DEFAULTS.audioSegmentLimitBytes,
+                minimumFreeSpaceBytes = prefs[MINIMUM_FREE_SPACE_BYTES]
+                    ?: RecordingSettings.DEFAULTS.minimumFreeSpaceBytes,
+                lowStorageWarningBytes = prefs[LOW_STORAGE_WARNING_BYTES]
+                    ?: RecordingSettings.DEFAULTS.lowStorageWarningBytes,
+                audioFallbackEnabled = prefs[AUDIO_FALLBACK_ENABLED] ?: true
+            )
+        )
+    }
 
     suspend fun updateVideoCodec(codec: String) {
         context.dataStore.edit { it[VIDEO_CODEC] = codec }
@@ -111,5 +156,31 @@ class SettingsManager(private val context: Context) {
             it[SORT_TYPE] = type
             it[SORT_ORDER] = order
         }
+    }
+
+    suspend fun updateSplitRecordingEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[SPLIT_RECORDING_ENABLED] = enabled }
+    }
+
+    suspend fun updateVideoSegmentLimitBytes(bytes: Long) {
+        context.dataStore.edit { it[VIDEO_SEGMENT_LIMIT_BYTES] = StoragePolicy.clampSegmentLimit(bytes) }
+    }
+
+    suspend fun updateAudioSegmentLimitBytes(bytes: Long) {
+        context.dataStore.edit { it[AUDIO_SEGMENT_LIMIT_BYTES] = StoragePolicy.clampSegmentLimit(bytes) }
+    }
+
+    suspend fun updateMinimumFreeSpaceBytes(bytes: Long) {
+        context.dataStore.edit { it[MINIMUM_FREE_SPACE_BYTES] = StoragePolicy.clampReserve(bytes) }
+    }
+
+    suspend fun updateLowStorageWarningBytes(bytes: Long) {
+        context.dataStore.edit {
+            it[LOW_STORAGE_WARNING_BYTES] = bytes.coerceAtLeast(StoragePolicy.MIN_RESERVE_BYTES)
+        }
+    }
+
+    suspend fun updateAudioFallbackEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[AUDIO_FALLBACK_ENABLED] = enabled }
     }
 }

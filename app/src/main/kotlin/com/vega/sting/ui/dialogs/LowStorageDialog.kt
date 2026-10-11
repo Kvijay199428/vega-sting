@@ -62,3 +62,44 @@ fun LowStorageDialog(
         containerColor = Panel
     )
 }
+
+/**
+ * Dismissible startup warning shown when the selected recording destination is
+ * getting low (but still above the hard reserve). It never blocks recording on
+ * its own - the service is the authority - it only informs.
+ */
+@Composable
+fun StorageWarningDialog(
+    freeSpace: String,
+    reserve: String,
+    destination: String,
+    onManage: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Low storage space", color = AccentYellow)
+        },
+        text = {
+            Text(
+                "Your recording storage ($destination) is almost full.\n\n" +
+                    "Only $freeSpace free. $reserve is kept as the minimum reserve, " +
+                    "after which recording stops to protect your files.\n\n" +
+                    "Clear some space to prevent recording from stopping unexpectedly.",
+                color = TextPrimary
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onManage) {
+                Text("MANAGE RECORDINGS", color = AccentOrange)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("DISMISS", color = TextSecondary)
+            }
+        },
+        containerColor = Panel
+    )
+}

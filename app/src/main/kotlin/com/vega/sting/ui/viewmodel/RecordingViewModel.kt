@@ -21,7 +21,12 @@ import com.vega.sting.repository.RecordingRepository
 import android.widget.Toast
 
 class RecordingViewModel(application: Application) : AndroidViewModel(application) {
-    companion object { private const val TAG = "RecordingViewModel" }
+    companion object {
+        private const val TAG = "RecordingViewModel"
+
+        /** Matches `[stem]_part-N.(mp4|m4a)` files written by the split recorder. */
+        private val PART_FILE_PATTERN = Regex("""^(.+)_part-(\d+)\.(mp4|m4a)$""")
+    }
 
     private val recordingDao: RecordingDao = AppDatabase.getDatabase(application).recordingDao()
     private val repository = RecordingRepository(application, recordingDao)
@@ -30,10 +35,106 @@ class RecordingViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
+            recoverInterruptedSegments()
+            importOrphanSegments()
             reconcileMissingActiveRows()
             com.vega.sting.storage.TrashRetentionManager.cleanupOldTrash(application)
         }
         com.vega.sting.storage.TrashRetentionWorker.schedule(application)
+    }
+
+    /**
+     * Rebuilds the manifest from the database and the filesystem. A part file
+     * that exists on disk but has no row (for example if the app died between
+     * opening the file and writing the row) is imported as a failed segment
+     * rather than being silently lost.
+     */
+    private suspend fun importOrphanSegments() {
+        if (com.vega.sting.core.RecordingStateManager.isRecording()) return
+        try {
+            val known = recordingDao.getAllPaths().toHashSet()
+            com.vega.sting.storage.StorageManager
+                .getAvailableStorages(getApplication())
+                .forEach storageLoop@{ (_, directory) ->
+                    val files = directory.listFiles() ?: return@storageLoop
+                    files.filter { it.isFile && it.length() > 0L && PART_FILE_PATTERN.containsMatchIn(it.name) }
+                        .forEach { file ->
+                            if (known.contains(file.absolutePath)) return@forEach
+                            val match = PART_FILE_PATTERN.find(file.name) ?: return@forEach
+                            val stem = match.groupValues[1]
+                            val part = match.groupValues[2].toIntOrNull()?.takeIf { it > 0 } ?: 1
+                            val isAudio = file.name.endsWith(".m4a")
+                            recordingDao.insertIfAbsent(
+                                Recording(
+                                    name = file.name,
+                                    timestamp = file.lastModified(),
+                                    path = file.absolutePath,
+                                    type = if (isAudio)
+                                        com.vega.sting.database.RecordingType.AUDIO
+                                    else
+                                        com.vega.sting.database.RecordingType.VIDEO,
+                                    codec = if (isAudio) "AAC" else "H.264",
+                                    size = file.length(),
+                                    sessionId = "recovered:$stem",
+                                    partIndex = part,
+                                    segmentStatus = com.vega.sting.database.SegmentStatus.FAILED.name,
+                                    startedAt = file.lastModified(),
+                                    endedAt = file.lastModified(),
+                                    finalizationReason =
+                                        com.vega.sting.database.FinalizationReason.ERROR.name,
+                                    isSessionComplete = true
+                                )
+                            )
+                            Log.w(TAG, "recovery: imported orphan segment ${file.name}")
+                        }
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "orphan import failed", e)
+        }
+    }
+
+    /**
+     * Finalises segments that were still marked RECORDING when the app last
+     * stopped (crash, force-kill, battery pull). Skipped entirely while a
+     * recording is actually in progress so the live part is never touched.
+     */
+    private suspend fun recoverInterruptedSegments() {
+        if (com.vega.sting.core.RecordingStateManager.isRecording()) return
+        try {
+            val orphaned = recordingDao.getInProgressSegments()
+            orphaned.forEach { rec ->
+                val file = File(rec.path)
+                if (file.exists() && file.length() > 0L) {
+                    Log.w(TAG, "recovery: keeping interrupted segment id=${rec.id} ${rec.path}")
+                    if (rec.sessionId != null) {
+                        recordingDao.finalizeSegment(
+                            sessionId = rec.sessionId,
+                            partIndex = rec.partIndex,
+                            name = rec.name,
+                            path = rec.path,
+                            size = file.length(),
+                            codec = rec.codec,
+                            width = rec.width,
+                            height = rec.height,
+                            endedAt = rec.endedAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                            reason = com.vega.sting.database.FinalizationReason.ERROR.name,
+                            status = com.vega.sting.database.SegmentStatus.FAILED.name
+                        )
+                    } else {
+                        recordingDao.setSegmentStatus(
+                            rec.id,
+                            com.vega.sting.database.SegmentStatus.FAILED.name,
+                            com.vega.sting.database.FinalizationReason.ERROR.name
+                        )
+                    }
+                } else {
+                    Log.w(TAG, "recovery: dropping empty interrupted segment id=${rec.id} ${rec.path}")
+                    recordingDao.delete(rec)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "recovery failed", e)
+        }
     }
 
     private suspend fun reconcileMissingActiveRows() {

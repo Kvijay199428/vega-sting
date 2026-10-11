@@ -34,6 +34,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -61,10 +64,13 @@ import com.vega.sting.ui.viewmodel.RecordingViewModel
 import com.vega.sting.ui.playback.PlaybackScreen
 import androidx.compose.ui.draw.alpha
 import com.vega.sting.settings.SettingsManager
+import com.vega.sting.settings.RecordingSettings
 import com.vega.sting.storage.StorageManager
 import com.vega.sting.storage.StorageType
 import com.vega.sting.storage.StorageHealthManager
+import com.vega.sting.storage.StoragePolicy
 import com.vega.sting.ui.dialogs.LowStorageDialog
+import com.vega.sting.ui.dialogs.StorageWarningDialog
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -207,6 +213,9 @@ fun HomeScreen(
     var currentFilter by remember { mutableStateOf("ALL") }
     var showLowStorageDialog by remember { mutableStateOf(false) }
     var freeSpaceStr by remember { mutableStateOf("") }
+    var showStorageWarning by remember { mutableStateOf(false) }
+    var storageWarningFree by remember { mutableStateOf("") }
+    var resumeTick by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     val settingsManager = remember { SettingsManager(context) }
@@ -217,6 +226,10 @@ fun HomeScreen(
     val audioCodec by settingsManager.audioCodec.collectAsState(initial = "AAC")
     val persistedSortTypeStr by settingsManager.sortType.collectAsState(initial = "DATE")
     val persistedSortOrderStr by settingsManager.sortOrder.collectAsState(initial = "DESC")
+    val reserveBytes by settingsManager.minimumFreeSpaceBytes
+        .collectAsState(initial = RecordingSettings.DEFAULTS.minimumFreeSpaceBytes)
+    val warningBytes by settingsManager.lowStorageWarningBytes
+        .collectAsState(initial = RecordingSettings.DEFAULTS.lowStorageWarningBytes)
 
     val sortType = remember(persistedSortTypeStr) {
         try { SortType.valueOf(persistedSortTypeStr) } catch (e: Exception) { SortType.DATE }
@@ -227,6 +240,31 @@ fun HomeScreen(
     var showSortMenu by remember { mutableStateOf(false) }
 
     var freeSpace by remember { mutableStateOf("0.00 GB") }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Evaluate storage at meaningful lifecycle events (app open / return to
+    // foreground), not on every recomposition.
+    LaunchedEffect(resumeTick) {
+        if (resumeTick == 0) return@LaunchedEffect
+        if (RecordingStateManager.isRecording()) return@LaunchedEffect
+        val dir = StorageManager.getRecordingDirectory(context, storageTypeFrom(storageLocation))
+        val snap = StorageHealthManager.snapshot(dir)
+        val status = StoragePolicy.statusFor(
+            snap.freeBytes, warningBytes, reserveBytes, snap.available
+        )
+        if (status == com.vega.sting.storage.StorageStatus.LOW) {
+            storageWarningFree = StorageHealthManager.formatFileSize(snap.freeBytes)
+            showStorageWarning = true
+        }
+    }
 
     LaunchedEffect(storageLocation, recordingState) {
         while (true) {
@@ -240,6 +278,13 @@ fun HomeScreen(
             freeSpace = StorageHealthManager.formatBytes(freeBytes)
             kotlinx.coroutines.delay(2000)
         }
+    }
+
+    val partCounts = remember(recordings) {
+        recordings
+            .filter { it.sessionId != null }
+            .groupBy { it.sessionId!! }
+            .mapValues { entry -> entry.value.size }
     }
 
     val filteredRecordings = recordings
@@ -327,6 +372,23 @@ fun HomeScreen(
                 context.startForegroundService(intent)
             },
             onCancel = { showLowStorageDialog = false }
+        )
+    }
+
+    if (showStorageWarning) {
+        StorageWarningDialog(
+            freeSpace = storageWarningFree,
+            reserve = StorageHealthManager.formatFileSize(reserveBytes),
+            destination = when (storageLocation) {
+                "SD_CARD" -> "SD card"
+                "OTG" -> "USB storage"
+                else -> "Internal storage"
+            },
+            onManage = {
+                showStorageWarning = false
+                onNavigateToTrash()
+            },
+            onDismiss = { showStorageWarning = false }
         )
     }
 
@@ -508,6 +570,7 @@ fun HomeScreen(
                 RecordingRow(
                     index = index + 1, 
                     recording = recording,
+                    partCount = recording.sessionId?.let { partCounts[it] } ?: 1,
                     isSelected = selectedIds.contains(recording.id),
                     selectionMode = selectionMode,
                     onToggleSelection = { viewModel.toggleSelection(recording.id) },
@@ -525,30 +588,65 @@ fun HomeScreen(
             onStartVideo = {
                 scope.launch {
                     val location = settingsManager.storageLocation.first()
-                    val storageType = when(location) {
-                        "SD_CARD" -> StorageType.SD_CARD
-                        "OTG" -> StorageType.OTG
-                        else -> StorageType.INTERNAL
-                    }
-                    val storageDir = StorageManager.getRecordingDirectory(context, storageType)
-                    val freeBytes = StorageHealthManager.getFreeSpaceBytes(storageDir)
-
-                    if (freeBytes <= StorageHealthManager.WARNING_LEVEL) {
-                        freeSpaceStr = StorageHealthManager.formatBytes(freeBytes)
-                        showLowStorageDialog = true
-                    } else {
-                        val intent = Intent(context, RecordingService::class.java).apply { 
-                            action = RecordingService.ACTION_START_VIDEO
+                    val storageDir = StorageManager.getRecordingDirectory(context, storageTypeFrom(location))
+                    val snap = StorageHealthManager.snapshot(storageDir)
+                    val reserve = settingsManager.minimumFreeSpaceBytes.first()
+                    val warning = settingsManager.lowStorageWarningBytes.first()
+                    when {
+                        !snap.available -> {
+                            Toast.makeText(
+                                context,
+                                "Recording storage is unavailable",
+                                Toast.LENGTH_LONG
+                            ).show()
                         }
-                        context.startForegroundService(intent)
+                        snap.freeBytes <= reserve -> {
+                            storageWarningFree = StorageHealthManager.formatFileSize(snap.freeBytes)
+                            showStorageWarning = true
+                        }
+                        snap.freeBytes <= warning -> {
+                            freeSpaceStr = StorageHealthManager.formatBytes(snap.freeBytes)
+                            showLowStorageDialog = true
+                        }
+                        else -> {
+                            val intent = Intent(context, RecordingService::class.java).apply {
+                                action = RecordingService.ACTION_START_VIDEO
+                            }
+                            context.startForegroundService(intent)
+                        }
                     }
                 }
             },
             onStartAudio = {
-                val intent = Intent(context, RecordingService::class.java).apply { 
-                    action = RecordingService.ACTION_START_AUDIO
+                scope.launch {
+                    val location = settingsManager.storageLocation.first()
+                    val storageDir = StorageManager.getRecordingDirectory(context, storageTypeFrom(location))
+                    val snap = StorageHealthManager.snapshot(storageDir)
+                    val reserve = settingsManager.minimumFreeSpaceBytes.first()
+                    when {
+                        !snap.available -> {
+                            Toast.makeText(
+                                context,
+                                "Recording storage is unavailable",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        !StoragePolicy.canStartAudio(snap.freeBytes, reserve) -> {
+                            Toast.makeText(
+                                context,
+                                "Not enough free space for audio (reserve " +
+                                    StorageHealthManager.formatFileSize(reserve) + ")",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        else -> {
+                            val intent = Intent(context, RecordingService::class.java).apply {
+                                action = RecordingService.ACTION_START_AUDIO
+                            }
+                            context.startForegroundService(intent)
+                        }
+                    }
                 }
-                context.startForegroundService(intent)
             },
             onStop = {
                 val intent = Intent(context, RecordingService::class.java).apply {
@@ -743,6 +841,7 @@ fun RecordingRow(
     recording: com.vega.sting.database.Recording,
     isSelected: Boolean,
     isLive: Boolean = false,
+    partCount: Int = 1,
     selectionMode: Boolean,
     onToggleSelection: () -> Unit,
     onOpen: () -> Unit
@@ -861,8 +960,13 @@ fun RecordingRow(
 
         Row(modifier = Modifier.fillMaxWidth()) {
             Spacer(modifier = Modifier.weight(TableIndexWeight))
+            val partLabel = if (!isLive && partCount > 1) {
+                "part ${recording.partIndex}/$partCount · "
+            } else {
+                ""
+            }
             Text(
-                text = "${recording.codec} | $resolutionStr | $sizeStr",
+                text = "$partLabel${recording.codec} | $resolutionStr | $sizeStr",
                 modifier = Modifier
                     .weight(TableNameWeight)
                     .padding(start = 22.dp),
@@ -886,4 +990,11 @@ enum class SortType {
 enum class SortOrder {
     ASC,
     DESC
+}
+
+/** Maps the persisted storage-location preference to a [StorageType]. */
+private fun storageTypeFrom(location: String): StorageType = when (location) {
+    "SD_CARD" -> StorageType.SD_CARD
+    "OTG" -> StorageType.OTG
+    else -> StorageType.INTERNAL
 }

@@ -23,6 +23,7 @@ import com.vega.sting.core.RecordingStateManager
 import com.vega.sting.legal.LegalDocument
 import com.vega.sting.overlay.OverlayPosition
 import com.vega.sting.settings.SettingsManager
+import com.vega.sting.settings.RecordingSettings
 import com.vega.sting.ui.components.DetailHeaderBar
 import com.vega.sting.ui.legal.LegalDocumentDialog
 import com.vega.sting.storage.StorageHealthManager
@@ -56,6 +57,14 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     val watermarkEnabled by settingsManager.watermarkEnabled.collectAsState(initial = true)
     val signaturePosition by settingsManager.signaturePosition.collectAsState(initial = "BOTTOM_LEFT")
     val overlayTextSize by settingsManager.overlayTextSize.collectAsState(initial = 18)
+    val splitEnabled by settingsManager.splitRecordingEnabled.collectAsState(initial = true)
+    val videoLimit by settingsManager.videoSegmentLimitBytes
+        .collectAsState(initial = RecordingSettings.DEFAULTS.videoSegmentLimitBytes)
+    val audioLimit by settingsManager.audioSegmentLimitBytes
+        .collectAsState(initial = RecordingSettings.DEFAULTS.audioSegmentLimitBytes)
+    val reserveBytes by settingsManager.minimumFreeSpaceBytes
+        .collectAsState(initial = RecordingSettings.DEFAULTS.minimumFreeSpaceBytes)
+    val audioFallback by settingsManager.audioFallbackEnabled.collectAsState(initial = true)
     
     
     
@@ -217,6 +226,56 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             )
         }
 
+        SettingsSection(title = "FILE SIZE & STORAGE SAFETY") {
+            SettingsItem(
+                label = "FILE SPLITTING",
+                value = if (splitEnabled) "ENABLED" else "DISABLED",
+                onClick = {
+                    scope.launch { settingsManager.updateSplitRecordingEnabled(!splitEnabled) }
+                }
+            )
+            SettingsItem(
+                label = "VIDEO FILE LIMIT",
+                value = StorageHealthManager.formatFileSize(videoLimit),
+                onClick = {
+                    val next = cycleBytes(VIDEO_SEGMENT_OPTIONS, videoLimit)
+                    scope.launch { settingsManager.updateVideoSegmentLimitBytes(next) }
+                }
+            )
+            SettingsItem(
+                label = "AUDIO FILE LIMIT",
+                value = StorageHealthManager.formatFileSize(audioLimit),
+                onClick = {
+                    val next = cycleBytes(AUDIO_SEGMENT_OPTIONS, audioLimit)
+                    scope.launch { settingsManager.updateAudioSegmentLimitBytes(next) }
+                }
+            )
+            SettingsItem(
+                label = "FREE-SPACE RESERVE",
+                value = StorageHealthManager.formatFileSize(reserveBytes),
+                onClick = {
+                    val next = cycleBytes(RESERVE_OPTIONS, reserveBytes)
+                    scope.launch { settingsManager.updateMinimumFreeSpaceBytes(next) }
+                }
+            )
+            SettingsItem(
+                label = "AUDIO FALLBACK",
+                value = if (audioFallback) "ENABLED" else "DISABLED",
+                onClick = {
+                    scope.launch { settingsManager.updateAudioFallbackEnabled(!audioFallback) }
+                }
+            )
+            Text(
+                "Preview — video ${StorageHealthManager.formatFileSize(videoLimit)} · " +
+                    "audio ${StorageHealthManager.formatFileSize(audioLimit)} · " +
+                    "reserve ${StorageHealthManager.formatFileSize(reserveBytes)} · " +
+                    "fallback ${if (audioFallback) "on" else "off"}",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextSecondary,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+        }
+
         SettingsSection(title = "OVERLAY") {
             SettingsItem(
                 label = "TIMESTAMP",
@@ -358,6 +417,18 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
 
 private val VIDEO_SIZE_OPTIONS = listOf("AUTO", "480P", "720P", "1080P", "1440P", "4K")
 private val VIDEO_RATIO_OPTIONS = listOf("AUTO", "16:9", "4:3", "1:1", "DISPLAY")
+
+private const val MB = 1024L * 1024L
+private const val GB = 1024L * MB
+
+private val VIDEO_SEGMENT_OPTIONS = listOf(500L * MB, 1L * GB, 2L * GB, 4L * GB)
+private val AUDIO_SEGMENT_OPTIONS = listOf(50L * MB, 100L * MB, 250L * MB, 500L * MB)
+private val RESERVE_OPTIONS = listOf(100L * MB, 300L * MB, 500L * MB, 1L * GB)
+
+private fun cycleBytes(options: List<Long>, current: Long): Long {
+    val index = options.indexOf(current)
+    return if (index < 0) options.first() else options[(index + 1) % options.size]
+}
 
 private fun cycleOption(options: List<String>, current: String): String {
     val index = options.indexOf(current)

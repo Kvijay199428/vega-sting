@@ -37,6 +37,11 @@ class SettingsManager(private val context: Context) {
         val MINIMUM_FREE_SPACE_BYTES = longPreferencesKey("minimum_free_space_bytes")
         val LOW_STORAGE_WARNING_BYTES = longPreferencesKey("low_storage_warning_bytes")
         val AUDIO_FALLBACK_ENABLED = booleanPreferencesKey("audio_fallback_enabled")
+
+        // SUPPORT REMINDERS
+        val SUPPORT_REMINDERS_ENABLED = booleanPreferencesKey("support_reminders_enabled")
+        val LAST_SUPPORT_REMINDER_AT = longPreferencesKey("last_support_reminder_at")
+        val NEXT_SUPPORT_REMINDER_AT = longPreferencesKey("next_support_reminder_at")
     }
 
     val videoCodec: Flow<String> = context.dataStore.data.map { it[VIDEO_CODEC] ?: "H.265" }
@@ -57,6 +62,10 @@ class SettingsManager(private val context: Context) {
     val orientationMode: Flow<String> = context.dataStore.data.map { it[ORIENTATION_MODE] ?: "FOLLOW_SENSOR" }
     val sortType: Flow<String> = context.dataStore.data.map { it[SORT_TYPE] ?: "DATE" }
     val sortOrder: Flow<String> = context.dataStore.data.map { it[SORT_ORDER] ?: "DESC" }
+
+    val supportRemindersEnabled: Flow<Boolean> = context.dataStore.data.map { it[SUPPORT_REMINDERS_ENABLED] ?: true }
+    val lastSupportReminderAt: Flow<Long> = context.dataStore.data.map { it[LAST_SUPPORT_REMINDER_AT] ?: 0L }
+    val nextSupportReminderAt: Flow<Long> = context.dataStore.data.map { it[NEXT_SUPPORT_REMINDER_AT] ?: 0L }
 
     val splitRecordingEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[SPLIT_RECORDING_ENABLED] ?: true }
@@ -182,5 +191,24 @@ class SettingsManager(private val context: Context) {
 
     suspend fun updateAudioFallbackEnabled(enabled: Boolean) {
         context.dataStore.edit { it[AUDIO_FALLBACK_ENABLED] = enabled }
+    }
+
+    suspend fun updateSupportRemindersEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[SUPPORT_REMINDERS_ENABLED] = enabled }
+    }
+
+    suspend fun setLastSupportReminderAt(timeMillis: Long) {
+        context.dataStore.edit { it[LAST_SUPPORT_REMINDER_AT] = timeMillis }
+    }
+
+    suspend fun setNextSupportReminderAt(timeMillis: Long) {
+        context.dataStore.edit { it[NEXT_SUPPORT_REMINDER_AT] = timeMillis }
+    }
+
+    suspend fun clearSupportReminderSchedule() {
+        context.dataStore.edit {
+            it.remove(LAST_SUPPORT_REMINDER_AT)
+            it.remove(NEXT_SUPPORT_REMINDER_AT)
+        }
     }
 }

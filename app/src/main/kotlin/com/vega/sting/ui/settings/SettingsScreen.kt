@@ -65,10 +65,7 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     val reserveBytes by settingsManager.minimumFreeSpaceBytes
         .collectAsState(initial = RecordingSettings.DEFAULTS.minimumFreeSpaceBytes)
     val audioFallback by settingsManager.audioFallbackEnabled.collectAsState(initial = true)
-    
-    
-    
-    
+    val supportReminders by settingsManager.supportRemindersEnabled.collectAsState(initial = true)
     
     var availableStorages by remember { mutableStateOf(StorageManager.getAvailableStorages(context)) }
     var showStoragePicker by remember { mutableStateOf(false) }
@@ -357,6 +354,27 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         SettingsSection(title = "TRASH") {
             SettingsItem(label = "TRASH SIZE", value = trashSizeStr)
             SettingsItem(label = "AUTO CLEANUP", value = "30 DAYS")
+        }
+
+        SettingsSection(title = "REMINDERS") {
+            SettingsItem(
+                label = "OCCASIONAL SUPPORT REMINDERS",
+                value = if (supportReminders) "ENABLED" else "DISABLED",
+                onClick = {
+                    scope.launch { settingsManager.updateSupportRemindersEnabled(!supportReminders) }
+                    if (supportReminders) {
+                        // disabling
+                    } else {
+                        // enabling - schedule initial if not set
+                        scope.launch {
+                            val now = System.currentTimeMillis()
+                            val next = java.util.concurrent.TimeUnit.DAYS.toMillis(7)
+                            settingsManager.setNextSupportReminderAt(now + next)
+                            com.vega.sting.reminders.SupportReminderScheduler.scheduleAt(context, next)
+                        }
+                    }
+                }
+            )
         }
 
         SettingsSection(title = "HARDWARE") {

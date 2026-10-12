@@ -1,4 +1,4 @@
-package com.vega.sting.updater
+﻿package com.vega.sting.updater
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser

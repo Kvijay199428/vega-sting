@@ -38,6 +38,7 @@ android {
         buildConfigField("String", "GITHUB_REPO_URL", "\"https://github.com/Kvijay199428/VEGA-STING\"")
         buildConfigField("String", "DEV_NAME", "\"VIJAYKRSHA.ONLINE\"")
         buildConfigField("String", "DEV_WEBSITE", "\"https://app.vijaykrsha.online\"")
+        buildConfigField("String", "UPDATE_CHANNEL", "\"stable\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

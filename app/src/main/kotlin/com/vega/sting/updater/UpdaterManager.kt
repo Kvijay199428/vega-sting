@@ -1,4 +1,4 @@
-package com.vega.sting.updater
+﻿package com.vega.sting.updater
 
 import android.content.Context
 import android.os.Handler

@@ -30,6 +30,7 @@ import com.vega.sting.storage.StorageHealthManager
 import com.vega.sting.storage.StorageManager
 import com.vega.sting.storage.StorageType
 import com.vega.sting.ui.theme.*
+import com.vega.sting.camera.*
 import kotlinx.coroutines.launch
 
 @Composable
@@ -70,6 +71,7 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     var availableStorages by remember { mutableStateOf(StorageManager.getAvailableStorages(context)) }
     var showStoragePicker by remember { mutableStateOf(false) }
     var showSignatureEditor by remember { mutableStateOf(false) }
+    var showDualCameraPreview by remember { mutableStateOf(false) }
     var signatureDraft by remember { mutableStateOf(signature) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -378,9 +380,6 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         }
 
         SettingsSection(title = "DUAL CAMERA") {
-            SettingsItem(label = "DUAL MODE", value = "OFF", onClick = { })
-            SettingsItem(label = "PORTRAIT LAYOUT", value = "FRONT TOP", onClick = { })
-            SettingsItem(label = "LANDSCAPE LAYOUT", value = "FRONT LEFT", onClick = { })
         }
 
         SettingsSection(title = "HARDWARE") {

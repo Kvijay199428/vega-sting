@@ -1,4 +1,4 @@
-package com.vega.sting.ui.settings
+﻿package com.vega.sting.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -375,6 +375,12 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
                     }
                 }
             )
+        }
+
+        SettingsSection(title = "DUAL CAMERA") {
+            SettingsItem(label = "DUAL MODE", value = "OFF", onClick = { })
+            SettingsItem(label = "PORTRAIT LAYOUT", value = "FRONT TOP", onClick = { })
+            SettingsItem(label = "LANDSCAPE LAYOUT", value = "FRONT LEFT", onClick = { })
         }
 
         SettingsSection(title = "HARDWARE") {

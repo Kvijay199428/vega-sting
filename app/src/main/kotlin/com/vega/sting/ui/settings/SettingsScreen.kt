@@ -1,5 +1,7 @@
 ﻿package com.vega.sting.ui.settings
 
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -11,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
@@ -460,7 +463,7 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         }
 
         SettingsSection(title = "ABOUT") {
-            SettingsItem(label = "DEVELOPER", value = com.vega.sting.BuildConfig.DEV_NAME)
+            SettingsItem(label = "DEVELOPER", value = com.vega.sting.BuildConfig.DEV_NAME, icon = R.drawable.ic_vijaykrsha_logo)
             SettingsItem(
                 label = "WEBSITE",
                 value = "LINK",
@@ -565,7 +568,12 @@ fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) 
 }
 
 @Composable
-fun SettingsItem(label: String, value: String, onClick: (() -> Unit)? = null) {
+fun SettingsItem(
+    label: String,
+    value: String,
+    onClick: (() -> Unit)? = null,
+    @DrawableRes icon: Int? = null
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -573,6 +581,14 @@ fun SettingsItem(label: String, value: String, onClick: (() -> Unit)? = null) {
             .clickable(enabled = onClick != null) { onClick?.invoke() },
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (icon != null) {
+            Image(
+                painter = painterResource(icon),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
         Text(
             text = label,
             modifier = Modifier.weight(0.48f),

@@ -399,6 +399,6 @@ likely to break OTA updates and consent enforcement silently.
   <br/>
   <strong>VEGA STING — Your device. Your recording. Your decision.</strong>
   <br/>
-  Developer: <a href="https://app.vijaykrsha.online">VIJAYKRSHA.ONLINE</a>
+  Developer: <a href="https://app.vijaykrsha.online"><img src=".assets/vijaykrsha-online/icon/icon24.png" width="16" height="16" alt="VIJAYKRSHA.ONLINE" style="vertical-align:middle" />&nbsp;VIJAYKRSHA.ONLINE</a>
   · Package: <code>com.vega.sting</code>
 </p>

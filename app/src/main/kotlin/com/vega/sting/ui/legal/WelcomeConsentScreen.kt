@@ -1,6 +1,7 @@
 package com.vega.sting.ui.legal
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -187,6 +189,21 @@ fun LegalDocumentDialog(
                     .heightIn(max = 440.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_vijaykrsha_logo),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = com.vega.sting.BuildConfig.DEV_NAME,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = AccentOrange,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = body,
                     style = MaterialTheme.typography.bodySmall,

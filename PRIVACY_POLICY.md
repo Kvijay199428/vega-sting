@@ -1,9 +1,13 @@
 # VEGA STING — Privacy Policy
 
-**Effective Date:** 29 September 2026
-**Developer:** VIJAYKRSHA.ONLINE
+<p align="center">
+  <img src=".assets/vijaykrsha-online/icon/icon256.png" width="96" alt="VIJAYKRSHA.ONLINE" />
+</p>
+
+**Effective Date:** 15 October 2026
+**Developer:** [VIJAYKRSHA.ONLINE](https://app.vijaykrsha.online)
 **Package Name:** `com.vega.sting`
-**Document Version:** 1.1
+**Document Version:** 1.2
 
 ---
 

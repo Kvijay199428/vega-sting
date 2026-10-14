@@ -1,9 +1,9 @@
 VEGA STING - TERMS AND CONDITIONS
 
-Effective Date: 29 September 2026
+Effective Date: 15 October 2026
 Developer: VIJAYKRSHA.ONLINE
 Package Name: com.vega.sting
-Document Version: 1.1
+Document Version: 1.2
 
 
 PREAMBLE

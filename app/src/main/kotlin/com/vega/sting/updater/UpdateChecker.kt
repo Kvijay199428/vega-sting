@@ -62,6 +62,15 @@ object UpdateChecker {
         data object UpToDate : SelectionResult
 
         /**
+         * The selected channel's newest release is older than the installed
+         * build, so switching to it would be a version *downgrade* Android will
+         * not perform. [reason] explains this to the user. This is distinct
+         * from [Rejected]: nothing is wrong with the release, the device is
+         * simply ahead of the channel and must wait for a newer release.
+         */
+        data class ChannelAhead(val reason: String) : SelectionResult
+
+        /**
          * Releases exist for this channel but none can be installed (wrong
          * channel/package, bad checksum, downgrade, …). [reason] is shown to
          * the user instead of silently falling back to the other channel.
@@ -81,13 +90,17 @@ object UpdateChecker {
      *
      * @param installedVersionCode the installed APK's version code
      * @param installedPackageName the installed package id
+     * @param installedChannel the channel the installed build was published on
+     * @param installedVersionName the installed build's version name
      */
     fun fetchUpdate(
         owner: String,
         repo: String,
         channel: UpdateChannel,
         installedVersionCode: Long,
-        installedPackageName: String
+        installedPackageName: String,
+        installedChannel: UpdateChannel,
+        installedVersionName: String
     ): SelectionResult {
         val endpoint = "https://api.github.com/repos/$owner/$repo/releases?per_page=$RELEASES_PER_PAGE"
         val body = httpGetString(endpoint, "application/vnd.github+json")
@@ -96,9 +109,15 @@ object UpdateChecker {
         val releases = parseReleases(body)
             ?: return SelectionResult.Failed("GitHub returned an unexpected response")
 
-        return selectUpdate(releases, channel, installedVersionCode, installedPackageName) { url ->
-            httpGetString(url, "application/octet-stream")
-        }
+        return selectUpdate(
+            releases = releases,
+            channel = channel,
+            installedVersionCode = installedVersionCode,
+            installedPackageName = installedPackageName,
+            fetchManifest = { url -> httpGetString(url, "application/octet-stream") },
+            installedChannel = installedChannel,
+            installedVersionName = installedVersionName
+        )
     }
 
     private fun httpGetString(url: String, accept: String): String? {
@@ -178,6 +197,18 @@ object UpdateChecker {
     /**
      * Selects the highest compatible release for [channel].
      *
+     * A *channel switch* (the selected channel differs from the channel the
+     * installed build came from) is allowed to install an **equal** version
+     * code -- Android permits an equal-code reinstall but never a lower one --
+     * so a device can move STABLE <-> DEBUG in either direction. A same-channel
+     * update still has to be a real bump: a strictly higher version code, or an
+     * equal code with a newer version name (the `x.y.z-dev.N` line shares the
+     * stable's version code).
+     *
+     * @param installedChannel the channel the installed build was published on
+     *   (defaults to the selected channel, i.e. no switch)
+     * @param installedVersionName the installed build's version name, used to
+     *   order equal version codes within the same channel
      * @param fetchManifest downloads an asset URL to its text body (injected so
      *   this function stays pure and testable)
      */
@@ -186,8 +217,12 @@ object UpdateChecker {
         channel: UpdateChannel,
         installedVersionCode: Long,
         installedPackageName: String,
-        fetchManifest: (String) -> String?
+        fetchManifest: (String) -> String?,
+        installedChannel: UpdateChannel = channel,
+        installedVersionName: String = ""
     ): SelectionResult {
+        val switchingChannel = channel != installedChannel
+
         val candidates = releases.filter { release ->
             !release.draft &&
                 channel.matchesTag(release.tagName) &&
@@ -195,10 +230,23 @@ object UpdateChecker {
                 (channel == UpdateChannel.DEBUG || !release.prerelease)
         }
 
-        if (candidates.isEmpty()) return SelectionResult.UpToDate
+        if (candidates.isEmpty()) {
+            // Switching to a channel that has published nothing yet is not an
+            // "up to date" result -- say so, rather than implying the user is
+            // already on that channel's newest build.
+            return if (switchingChannel) {
+                SelectionResult.ChannelAhead(
+                    "No ${channel.label} release is available yet. Your update channel is set to " +
+                        "${channel.label}; you'll be notified when one is published."
+                )
+            } else {
+                SelectionResult.UpToDate
+            }
+        }
 
         var best: UpdateInfo? = null
         var highestSeenCode = Long.MIN_VALUE
+        var highestSeenName: String? = null
         val reasons = mutableListOf<String>()
 
         for (release in candidates) {
@@ -253,9 +301,28 @@ object UpdateChecker {
                 continue
             }
 
-            if (manifest.versionCode > highestSeenCode) highestSeenCode = manifest.versionCode
+            // Track the newest release seen (regardless of installability) by
+            // version code, breaking ties with the version name so a
+            // `x.y.z-dev.2` outranks a `x.y.z-dev.1` sharing the same code.
+            if (manifest.versionCode > highestSeenCode ||
+                (manifest.versionCode == highestSeenCode &&
+                    compareVersions(manifest.versionName, highestSeenName) > 0)
+            ) {
+                highestSeenCode = manifest.versionCode
+                highestSeenName = manifest.versionName
+            }
 
-            if (manifest.versionCode <= installedVersionCode) {
+            val installable =
+                if (switchingChannel) {
+                    // A switch may reinstall the same code (never a lower one).
+                    manifest.versionCode >= installedVersionCode
+                } else {
+                    manifest.versionCode > installedVersionCode ||
+                        (manifest.versionCode == installedVersionCode &&
+                            installedVersionName.isNotBlank() &&
+                            compareVersions(manifest.versionName, installedVersionName) > 0)
+                }
+            if (!installable) {
                 reasons += "${release.tagName}: version code ${manifest.versionCode} is not newer than $installedVersionCode"
                 continue
             }
@@ -265,7 +332,12 @@ object UpdateChecker {
                 continue
             }
 
-            if (best == null || manifest.versionCode > best!!.versionCode) {
+            val current = best
+            val better = current == null ||
+                manifest.versionCode > current.versionCode ||
+                (manifest.versionCode == current.versionCode &&
+                    compareVersions(manifest.versionName, current.versionName) > 0)
+            if (better) {
                 best = UpdateInfo(
                     channel = channel,
                     versionName = manifest.versionName,
@@ -282,13 +354,72 @@ object UpdateChecker {
 
         best?.let { return SelectionResult.Available(it) }
 
-        // Nothing installable. If every candidate was simply older than the
-        // installed build, this is an up-to-date result; otherwise surface the
-        // first concrete rejection so the user learns *why*.
+        // Nothing installable. If the device is already ahead of everything this
+        // channel has published: explain it for a channel switch (a downgrade
+        // Android will refuse), otherwise report the ordinary up-to-date result.
         if (highestSeenCode != Long.MIN_VALUE && highestSeenCode <= installedVersionCode) {
+            if (switchingChannel) {
+                val latest = highestSeenName?.let { " (latest: $it, build $highestSeenCode)" }.orEmpty()
+                val installed = if (installedVersionName.isBlank()) {
+                    "${installedChannel.label} (build $installedVersionCode)"
+                } else {
+                    "${installedChannel.label} $installedVersionName (build $installedVersionCode)"
+                }
+                return SelectionResult.ChannelAhead(
+                    "You're running $installed, which is newer than the latest " +
+                        "${channel.label} release$latest. Android can't install an older build " +
+                        "over a newer one. Your channel is set to ${channel.label}; you'll be " +
+                        "offered the next ${channel.label} release automatically."
+                )
+            }
             return SelectionResult.UpToDate
         }
         return SelectionResult.Rejected(reasons.firstOrNull() ?: "No compatible release found")
+    }
+
+    /**
+     * Orders two channel version names, understanding the `x.y.z` and
+     * `x.y.z-dev.N` forms. Within a single channel this lets an equal version
+     * code still be recognised as newer (e.g. `2.0.4-dev.2` over `2.0.4-dev.1`,
+     * which now share a version code). A plain stable name outranks the
+     * `-dev` builds of the same numeric version.
+     *
+     * @return negative when [a] is older, positive when newer, 0 when equal
+     */
+    internal fun compareVersions(a: String, b: String?): Int {
+        if (b.isNullOrBlank()) return if (a.isBlank()) 0 else 1
+        val (aBase, aDev) = splitVersion(a)
+        val (bBase, bDev) = splitVersion(b)
+        val base = compareNumeric(aBase, bBase)
+        if (base != 0) return base
+        return aDev.compareTo(bDev)
+    }
+
+    private fun splitVersion(version: String): Pair<List<Int>, Int> {
+        val cleaned = version.trim()
+        val devMarker = "-dev."
+        val devIndex = cleaned.indexOf(devMarker)
+        val basePart = if (devIndex >= 0) cleaned.substring(0, devIndex) else cleaned.substringBefore('-')
+        val numbers = basePart.removePrefix("v").split('.').map { segment ->
+            segment.takeWhile(Char::isDigit).toIntOrNull() ?: 0
+        }
+        // A plain (stable) name outranks every -dev build of the same version.
+        val devNumber = if (devIndex >= 0) {
+            cleaned.substring(devIndex + devMarker.length).takeWhile(Char::isDigit).toIntOrNull() ?: 0
+        } else {
+            Int.MAX_VALUE
+        }
+        return numbers to devNumber
+    }
+
+    private fun compareNumeric(a: List<Int>, b: List<Int>): Int {
+        val length = maxOf(a.size, b.size)
+        for (i in 0 until length) {
+            val av = a.getOrElse(i) { 0 }
+            val bv = b.getOrElse(i) { 0 }
+            if (av != bv) return av.compareTo(bv)
+        }
+        return 0
     }
 
     /**

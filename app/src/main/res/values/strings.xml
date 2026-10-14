@@ -26,6 +26,7 @@
     <string name="update_blocked_recording">Update check paused while recording</string>
     <string name="update_incompatible_title">Update Not Compatible</string>
     <string name="update_incompatible_body">The available release can\'t be installed over your current app.</string>
+    <string name="update_channel_blocked_title">Channel Not Available Yet</string>
 
     <!-- Update channel selection -->
     <string name="settings_update_channel">UPDATE CHANNEL</string>

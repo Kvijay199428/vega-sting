@@ -46,6 +46,13 @@ class UpdaterManager(private val context: Context) {
         data object UpToDate : CheckResult
 
         /**
+         * The selected channel's newest release is older than the installed
+         * build, so switching to it would be an Android version downgrade. The
+         * channel preference is kept; [reason] explains the situation.
+         */
+        data class ChannelAhead(val reason: String) : CheckResult
+
+        /**
          * Releases exist for the selected channel but none can replace the
          * installed app (wrong package, incompatible signature, downgrade, …).
          */
@@ -88,7 +95,9 @@ class UpdaterManager(private val context: Context) {
                 repo = BuildConfig.GITHUB_REPO,
                 channel = channel,
                 installedVersionCode = BuildConfig.VERSION_CODE.toLong(),
-                installedPackageName = context.packageName
+                installedPackageName = context.packageName,
+                installedChannel = UpdateChannel.installed(),
+                installedVersionName = BuildConfig.VERSION_NAME
             )
 
             val check = when (result) {
@@ -101,6 +110,7 @@ class UpdaterManager(private val context: Context) {
                     }
                 }
                 UpdateChecker.SelectionResult.UpToDate -> CheckResult.UpToDate
+                is UpdateChecker.SelectionResult.ChannelAhead -> CheckResult.ChannelAhead(result.reason)
                 is UpdateChecker.SelectionResult.Rejected -> CheckResult.Incompatible(result.reason)
                 is UpdateChecker.SelectionResult.Failed -> CheckResult.Failed(result.reason)
             }

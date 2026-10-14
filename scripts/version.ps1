@@ -85,9 +85,14 @@ function WriteProps([hashtable]$Map) {
         '# Edited automatically by release.bat / debug.bat. Do not hand-edit.'
         '# ============================================================================'
         ''
-        '# Globally monotonic Android versionCode, shared by BOTH channels.'
-        '# Android refuses downgrades, so this must only ever increase.'
+        '# versionCode for the NEXT STABLE release. It only moves when a stable'
+        '# build is committed.'
         "next.versionCode=$($Map['next.versionCode'])"
+        ''
+        '# A DEBUG build reuses the latest stable release versionCode'
+        '# (next.versionCode - 1) so a device can switch STABLE <-> DEBUG without'
+        '# Android rejecting it as a downgrade. Debug builds are told apart by'
+        '# their versionName (x.y.z-dev.N).'
         ''
         '# Oldest installed versionCode still eligible for OTA updates.'
         "minSupported.versionCode=$($Map['minSupported.versionCode'])"
@@ -129,7 +134,6 @@ switch ($Mode) {
         break
     }
     'next' {
-        $code = $props['next.versionCode']
         if ($Channel -eq 'stable') {
             # STABLE names are plain x.y.z (no -stable.N suffix). A respin is
             # therefore just another patch bump: once a stable version has been
@@ -140,6 +144,7 @@ switch ($Mode) {
             elseif ($Minor) { $base = BumpVersion $base 'minor' }
             else { $base = BumpVersion $base 'patch' }
             $name = $base
+            $code = [int]$props['next.versionCode']
         }
         else {
             if ($Base) {
@@ -152,6 +157,13 @@ switch ($Mode) {
                 $counter = [int]$props['debug.buildNumber'] + 1
             }
             $name = "$base-dev.$counter"
+            # A DEBUG build reuses the versionCode of the latest STABLE release
+            # (next.versionCode - 1) and does NOT advance it. Android permits an
+            # equal-code reinstall but never a lower one, so keeping DEBUG level
+            # with STABLE is what makes STABLE <-> DEBUG switching installable in
+            # both directions. next.versionCode therefore only moves on a stable.
+            $code = [int]$props['next.versionCode'] - 1
+            if ($code -lt 1) { $code = 1 }
         }
         Write-Output "versionName=$name"
         Write-Output "versionCode=$code"
@@ -161,12 +173,6 @@ switch ($Mode) {
     'commit' {
         if (-not $VersionName) { Fail 'commit requires -VersionName.' }
         if ($VersionCode -le 0) { Fail 'commit requires -VersionCode.' }
-        $code = $props['next.versionCode']
-        if ([int]$VersionCode -gt [int]$code) {
-            # The build ran with an injected code; adopt it and move past it.
-            $code = [string]$VersionCode
-        }
-        $props['next.versionCode'] = [string]([int]$code + 1)
 
         if ($Channel -eq 'stable') {
             if ($VersionName -notmatch '^(\d+\.\d+\.\d+)$') {
@@ -174,6 +180,13 @@ switch ($Mode) {
             }
             $stableBase = $Matches[1]
             $props['release.baseVersion'] = $stableBase
+
+            # Only a STABLE build consumes/moves next.versionCode. The build may
+            # have run with an injected code; adopt it if it is ahead, then move
+            # past it so the next stable never reuses a code.
+            $code = [int]$props['next.versionCode']
+            if ($VersionCode -gt $code) { $code = $VersionCode }
+            $props['next.versionCode'] = [string]($code + 1)
 
             # Advance the development line past the newly shipped stable base,
             # but never move it backwards if dev is already ahead.
@@ -188,6 +201,9 @@ switch ($Mode) {
             if ($VersionName -notmatch '^(\d+\.\d+\.\d+)-dev\.(\d+)$') {
                 Fail "Dev version name '$VersionName' does not match x.y.z-dev.N."
             }
+            # A DEBUG build does NOT consume a version code: it reuses the last
+            # stable's code so channel switches stay installable. Advancing the
+            # dev counter is enough to distinguish consecutive debug builds.
             $props['debug.baseVersion'] = $Matches[1]
             $props['debug.buildNumber'] = $Matches[2]
             $props['debug.versionName'] = $VersionName

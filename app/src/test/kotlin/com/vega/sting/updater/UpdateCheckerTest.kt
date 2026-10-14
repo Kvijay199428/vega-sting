@@ -391,6 +391,119 @@ class UpdateCheckerTest {
         assertEquals(40L, (result as UpdateChecker.SelectionResult.Available).update.versionCode)
     }
 
+    // ---- channel switching ----
+
+    @Test
+    fun `switching channel with an equal version code is offered`() {
+        // A STABLE install selecting DEBUG: the debug build shares the stable's
+        // version code (Android allows an equal-code reinstall), so it must be
+        // offered rather than reported as up to date.
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 14,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.STABLE,
+            installedVersionName = "2.0.2",
+            fetchManifest = { manifest(versionName = "2.0.2-dev.1", versionCode = 14) }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        assertEquals(14L, (result as UpdateChecker.SelectionResult.Available).update.versionCode)
+    }
+
+    @Test
+    fun `switching to a channel whose newest build is older explains the downgrade`() {
+        // Device on DEBUG 2.0.3-dev.1 (code 14) selecting STABLE, whose newest is
+        // 2.0.2 (code 13). Android cannot downgrade, so this must not masquerade
+        // as "up to date" -- it is reported as a channel-ahead situation.
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(stableRelease(tag = "v2.0.2")),
+            channel = UpdateChannel.STABLE,
+            installedVersionCode = 14,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.DEBUG,
+            installedVersionName = "2.0.3-dev.1",
+            fetchManifest = { stableManifest(versionName = "2.0.2", versionCode = 13) }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.ChannelAhead)
+        val reason = (result as UpdateChecker.SelectionResult.ChannelAhead).reason
+        assertTrue(reason.contains("2.0.2"))
+    }
+
+    @Test
+    fun `switching to an empty channel reports channel-ahead, not up to date`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = emptyList(),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.STABLE,
+            installedVersionName = "2.0.2",
+            fetchManifest = { null }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.ChannelAhead)
+    }
+
+    @Test
+    fun `same-channel equal code with a newer dev build is offered`() {
+        // Debug builds share a version code, so consecutive dev builds are told
+        // apart by their versionName.
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease(tag = "debug-v2.0.4-dev.2", apkName = "vega-sting-debug-2.0.4-dev.2.apk")),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 15,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.DEBUG,
+            installedVersionName = "2.0.4-dev.1",
+            fetchManifest = { manifest(versionName = "2.0.4-dev.2", versionCode = 15, apkAsset = "vega-sting-debug-2.0.4-dev.2.apk") }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        assertEquals("2.0.4-dev.2", (result as UpdateChecker.SelectionResult.Available).update.versionName)
+    }
+
+    @Test
+    fun `same-channel equal code with the same dev build is up to date`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease(tag = "debug-v2.0.4-dev.1", apkName = "vega-sting-debug-2.0.4-dev.1.apk")),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 15,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.DEBUG,
+            installedVersionName = "2.0.4-dev.1",
+            fetchManifest = { manifest(versionName = "2.0.4-dev.1", versionCode = 15, apkAsset = "vega-sting-debug-2.0.4-dev.1.apk") }
+        )
+        assertEquals(UpdateChecker.SelectionResult.UpToDate, result)
+    }
+
+    // ---- compareVersions ----
+
+    @Test
+    fun `compareVersions orders numeric bases`() {
+        assertTrue(UpdateChecker.compareVersions("2.0.3", "2.0.2") > 0)
+        assertTrue(UpdateChecker.compareVersions("2.0.2", "2.0.3") < 0)
+        assertEquals(0, UpdateChecker.compareVersions("2.0.3", "2.0.3"))
+        assertTrue(UpdateChecker.compareVersions("2.0.4-dev.1", "2.0.3") > 0)
+    }
+
+    @Test
+    fun `compareVersions orders dev build numbers`() {
+        assertTrue(UpdateChecker.compareVersions("2.0.4-dev.2", "2.0.4-dev.1") > 0)
+        assertTrue(UpdateChecker.compareVersions("2.0.4-dev.1", "2.0.4-dev.2") < 0)
+        assertEquals(0, UpdateChecker.compareVersions("2.0.4-dev.5", "2.0.4-dev.5"))
+    }
+
+    @Test
+    fun `compareVersions ranks a stable name above its dev builds`() {
+        assertTrue(UpdateChecker.compareVersions("2.0.3", "2.0.3-dev.5") > 0)
+        assertTrue(UpdateChecker.compareVersions("2.0.3-dev.5", "2.0.3") < 0)
+    }
+
+    @Test
+    fun `compareVersions treats a blank reference as older`() {
+        assertTrue(UpdateChecker.compareVersions("2.0.3", "") > 0)
+        assertTrue(UpdateChecker.compareVersions("2.0.3", null) > 0)
+    }
+
     // ---- ReleaseManifest ----
 
     @Test

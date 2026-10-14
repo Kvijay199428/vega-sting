@@ -45,7 +45,13 @@ import com.vega.sting.updater.UpdateChecker
 
 /** Shown when the manual check finds nothing newer for the selected channel. */
 @Composable
-fun UpToDateDialog(channelLabel: String, onDismiss: () -> Unit) {
+fun UpToDateDialog(
+    channelLabel: String,
+    installedChannelLabel: String,
+    installedVersionName: String,
+    installedVersionCode: Long,
+    onDismiss: () -> Unit
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Panel,
@@ -61,7 +67,40 @@ fun UpToDateDialog(channelLabel: String, onDismiss: () -> Unit) {
         },
         text = {
             Text(
-                text = "You already have the latest $channelLabel build.",
+                text = "You already have the latest $channelLabel build.\n" +
+                    "Installed: $installedChannelLabel $installedVersionName (build $installedVersionCode).",
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        confirmButton = {
+            TerminalTextButton(text = stringResource(R.string.update_close), onClick = onDismiss)
+        }
+    )
+}
+
+/**
+ * Shown when the user switches to a channel whose newest release is older than
+ * the installed build. [reason] explains that Android cannot downgrade and that
+ * the channel preference is kept until a newer release is published.
+ */
+@Composable
+fun UpdateChannelSwitchBlockedDialog(reason: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Panel,
+        titleContentColor = AccentOrange,
+        textContentColor = TextPrimary,
+        shape = RoundedCornerShape(4.dp),
+        title = {
+            Text(
+                text = stringResource(R.string.update_channel_blocked_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        text = {
+            Text(
+                text = reason,
                 fontFamily = FontFamily.Monospace
             )
         },

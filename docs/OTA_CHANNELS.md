@@ -38,17 +38,25 @@ decides what a user is offered.
 
 ## 3. Version policy
 
-* One globally **monotonic** `versionCode` (`next.versionCode`) is shared by both
-  channels. Android rejects a lower `versionCode`, so a channel switch can never
-  install a downgrade. The counter is advanced **only after** a build succeeds
-  and passes verification.
+* `next.versionCode` is the `versionCode` for the **next STABLE release**. It is
+  advanced **only after** a stable build succeeds and passes verification.
+* A **DEBUG build reuses the latest STABLE release's `versionCode`**
+  (`next.versionCode - 1`) and does not consume a code of its own. Android
+  refuses a lower `versionCode` but permits an **equal‑code reinstall**, so
+  keeping DEBUG level with STABLE is what lets a device move STABLE ⇄ DEBUG in
+  either direction. (If DEBUG were allowed to run ahead, switching back to
+  STABLE would be a downgrade Android rejects — which is exactly the trap this
+  policy avoids.)
+* Consecutive DEBUG builds therefore share a `versionCode` and are told apart by
+  their `versionName` (`x.y.z-dev.N`); the updater compares version names to
+  order equal codes within a channel.
 * Version names:
   * STABLE: `x.y.z` (plain — no suffix; see §8 for why)
   * DEBUG:  `x.y.z-dev.N`
 * `version.properties` is the single source of truth:
 
 ```properties
-next.versionCode=13            # next build's versionCode (shared)
+next.versionCode=13            # versionCode for the NEXT stable release
 minSupported.versionCode=1     # oldest installed code still eligible for OTA
 release.baseVersion=2.0.1      # versionName of the LAST stable release
 debug.baseVersion=2.0.2
@@ -58,12 +66,14 @@ debug.versionName=2.0.2-dev.1
 
 Rules applied by `scripts/version.ps1`:
 
-* `--stable` patch‑bumps the last stable version: `2.0.1 → 2.0.2`.
+* `--stable` patch‑bumps the last stable version: `2.0.1 → 2.0.2`, and consumes
+  `next.versionCode` (which then advances).
 * `--stable --minor` / `--major` bumps minor/major instead: `2.1.0` / `3.0.0`.
 * `--stable --respin` is accepted but identical to `--stable` (a patch bump):
   stable names carry no counter, and an already‑installed version can never be
   re‑offered.
-* `--dev` increments the dev counter on the current dev base.
+* `--dev` increments the dev counter on the current dev base and reuses the last
+  stable's `versionCode` (the counter does not move).
 * After a successful `--stable` build the dev base auto‑advances to
   `stableBase + 1 patch` (but never moves backwards).
 
@@ -96,6 +106,17 @@ versionCode** — not the most recently published release. A candidate is reject
 missing, the channel/package/version do not match, the checksum is not a valid
 SHA‑256, the release is a downgrade, or the installed version is below the
 manifest's `minSupportedVersionCode`.
+
+Candidate eligibility depends on whether the user is **switching channels**:
+
+* Same channel — a real bump is required: a strictly higher `versionCode`, or an
+  equal code with a newer `versionName` (the shared‑code `x.y.z-dev.N` line).
+* Channel switch — an **equal** `versionCode` is installable (an equal‑code
+  reinstall); a lower one is not. When the selected channel's newest release is
+  *older* than the installed build, the check reports a **channel‑ahead**
+  situation: Android cannot downgrade, the channel preference is kept, and the
+  user is told they will get the next release on that channel. It never claims
+  the other channel's build is already installed.
 
 ## 5. Building a release
 
@@ -132,6 +153,11 @@ version name is never touched.
 * Selecting a channel in Settings shows a confirmation dialog; **Continue** saves
   the preference and immediately checks the chosen channel, **Cancel** leaves the
   previous preference untouched.
+* If the chosen channel's newest release is older than the installed build, the
+  switch cannot be installed (Android downgrade rule). The preference is still
+  saved and a **channel‑ahead** dialog explains that the next release on that
+  channel will be offered automatically — it never claims the channel is already
+  installed.
 * Downloads go to app‑private storage and are validated (SHA‑256, package,
   version, signer) before the system installer is opened. The user must confirm
   the install; nothing is ever auto‑installed.
@@ -170,7 +196,8 @@ Consequences, and why the rules in §3/§4 exist:
 * **STABLE releases must never be pre‑releases**, or `/releases/latest` skips
   them.
 * **STABLE version names must never be reused**, because the installer rejects a
-  build that is not strictly newer by `versionCode`.
+  build that is not at least equal by `versionCode` in the same‑channel case and
+  there is otherwise no way to distinguish two builds named `2.0.2`.
 
 So the first STABLE release under this scheme is the bridge: existing users are
 offered it automatically in‑app (no manual download) and, once installed, run

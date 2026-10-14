@@ -64,6 +64,7 @@ fun UpdateHost(
     var showUpToDate by remember { mutableStateOf(false) }
     var downloadError by remember { mutableStateOf<String?>(null) }
     var incompatibleReason by remember { mutableStateOf<String?>(null) }
+    var channelAheadReason by remember { mutableStateOf<String?>(null) }
 
     
     var deferredUpdate by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
@@ -99,6 +100,9 @@ fun UpdateHost(
                         }
                     }
                     UpdaterManager.CheckResult.UpToDate -> if (manual) showUpToDate = true
+                    is UpdaterManager.CheckResult.ChannelAhead -> {
+                        if (manual) channelAheadReason = result.reason
+                    }
                     is UpdaterManager.CheckResult.Incompatible -> {
                         if (manual) incompatibleReason = result.reason
                     }
@@ -136,7 +140,9 @@ fun UpdateHost(
         }
     }
 
-    if (isChecking && available == null && downloadJob == null && !checkFailed && incompatibleReason == null) {
+    if (isChecking && available == null && downloadJob == null && !checkFailed &&
+        incompatibleReason == null && channelAheadReason == null
+    ) {
         CheckingDialog()
     }
 
@@ -151,6 +157,13 @@ fun UpdateHost(
         )
     }
 
+    channelAheadReason?.let { reason ->
+        UpdateChannelSwitchBlockedDialog(
+            reason = reason,
+            onDismiss = { channelAheadReason = null }
+        )
+    }
+
     downloadError?.let { reason ->
         UpdateDownloadFailedDialog(
             reason = reason,
@@ -161,6 +174,9 @@ fun UpdateHost(
     if (showUpToDate) {
         UpToDateDialog(
             channelLabel = selectedChannel.label,
+            installedChannelLabel = UpdateChannel.installed().label,
+            installedVersionName = BuildConfig.VERSION_NAME,
+            installedVersionCode = BuildConfig.VERSION_CODE.toLong(),
             onDismiss = { showUpToDate = false }
         )
     }

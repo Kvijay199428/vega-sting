@@ -3,16 +3,10 @@
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.os.Build
 
 class DualCameraCapabilityChecker(private val context: Context) {
-    data class Result(
-        val supported: Boolean,
-        val frontCameraId: String? = null,
-        val backCameraId: String? = null,
-        val reason: String? = null
-    )
-
-    fun check(): Result {
+    fun check(): DualCameraCapabilityResult {
         try {
             val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val ids = manager.cameraIdList
@@ -27,11 +21,32 @@ class DualCameraCapabilityChecker(private val context: Context) {
                 }
             }
             if (frontId == null || backId == null) {
-                return Result(supported = false, reason = "Missing front or back camera")
+                return DualCameraCapabilityResult(
+                    hasFrontCamera = frontId != null,
+                    hasBackCamera = backId != null,
+                    reason = "Missing front or back camera"
+                )
             }
-            return Result(supported = true, frontCameraId = frontId, backCameraId = backId)
+
+            var supportsConcurrent = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try {
+                    val concurrent = manager.concurrentCameraIds
+                    supportsConcurrent = concurrent.contains(setOf(frontId, backId))
+                } catch (e: Exception) {
+                    supportsConcurrent = false
+                }
+            }
+            return DualCameraCapabilityResult(
+                hasFrontCamera = true,
+                hasBackCamera = true,
+                supportsConcurrentCapture = supportsConcurrent,
+                isPreviewSupported = true,
+                isRecordingSupported = supportsConcurrent,
+                reason = if (supportsConcurrent) null else "Concurrent capture not verified on this API level"
+            )
         } catch (e: Exception) {
-            return Result(supported = false, reason = e.message)
+            return DualCameraCapabilityResult(reason = e.message)
         }
     }
 }

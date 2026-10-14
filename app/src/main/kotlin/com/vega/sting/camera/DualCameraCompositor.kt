@@ -3,10 +3,7 @@
 import android.content.Context
 
 class DualCameraCompositor(private val context: Context) {
-    // Placeholder for OpenGL ES compositor
-    fun initialize() {
-    }
-
-    fun release() {
-    }
+    fun initialize(config: DualCameraConfig): Boolean = true
+    fun renderFrame() {}
+    fun release() {}
 }

@@ -3,6 +3,20 @@
 import android.content.Context
 
 class DualCameraController(private val context: Context) {
-    fun release() {
+    private var isRunning = false
+
+    fun start(config: DualCameraConfig): Boolean {
+        isRunning = true
+        return true
     }
+
+    fun stop() {
+        isRunning = false
+    }
+
+    fun release() {
+        isRunning = false
+    }
+
+    fun isActive(): Boolean = isRunning
 }

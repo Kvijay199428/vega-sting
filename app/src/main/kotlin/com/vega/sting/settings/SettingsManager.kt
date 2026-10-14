@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.vega.sting.storage.StoragePolicy
+import com.vega.sting.updater.UpdateChannel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -29,6 +30,9 @@ class SettingsManager(private val context: Context) {
         val ORIENTATION_MODE = stringPreferencesKey("orientation_mode")
         val SORT_TYPE = stringPreferencesKey("sort_type")
         val SORT_ORDER = stringPreferencesKey("sort_order")
+
+        // UPDATE CHANNEL (runtime-selectable: STABLE / DEBUG)
+        val SELECTED_UPDATE_CHANNEL = stringPreferencesKey("selected_update_channel")
 
         // FILE SIZE & STORAGE SAFETY
         val SPLIT_RECORDING_ENABLED = booleanPreferencesKey("split_recording_enabled")
@@ -62,6 +66,14 @@ class SettingsManager(private val context: Context) {
     val orientationMode: Flow<String> = context.dataStore.data.map { it[ORIENTATION_MODE] ?: "FOLLOW_SENSOR" }
     val sortType: Flow<String> = context.dataStore.data.map { it[SORT_TYPE] ?: "DATE" }
     val sortOrder: Flow<String> = context.dataStore.data.map { it[SORT_ORDER] ?: "DESC" }
+
+    /**
+     * The user-selected OTA update channel. Falls back to the channel baked into
+     * the installed APK ([UpdateChannel.installed]) until the user explicitly
+     * switches; a saved preference is never overwritten on startup.
+     */
+    val selectedUpdateChannel: Flow<UpdateChannel> =
+        context.dataStore.data.map { UpdateChannel.fromPreference(it[SELECTED_UPDATE_CHANNEL]) }
 
     val supportRemindersEnabled: Flow<Boolean> = context.dataStore.data.map { it[SUPPORT_REMINDERS_ENABLED] ?: true }
     val lastSupportReminderAt: Flow<Long> = context.dataStore.data.map { it[LAST_SUPPORT_REMINDER_AT] ?: 0L }
@@ -165,6 +177,11 @@ class SettingsManager(private val context: Context) {
             it[SORT_TYPE] = type
             it[SORT_ORDER] = order
         }
+    }
+
+    /** Persists the user's chosen OTA update channel. */
+    suspend fun updateSelectedUpdateChannel(channel: UpdateChannel) {
+        context.dataStore.edit { it[SELECTED_UPDATE_CHANNEL] = channel.name }
     }
 
     suspend fun updateSplitRecordingEnabled(enabled: Boolean) {

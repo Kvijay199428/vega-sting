@@ -24,6 +24,20 @@
     <string name="update_unable_to_install">Android blocked the install. Enable “Install unknown apps” for VEGA STING in Settings, then try again.</string>
     <string name="update_notes_label">What\'s new</string>
     <string name="update_blocked_recording">Update check paused while recording</string>
+    <string name="update_incompatible_title">Update Not Compatible</string>
+    <string name="update_incompatible_body">The available release can\'t be installed over your current app.</string>
+
+    <!-- Update channel selection -->
+    <string name="settings_update_channel">UPDATE CHANNEL</string>
+    <string name="update_channel_stable_title">STABLE</string>
+    <string name="update_channel_stable_desc">Published production releases intended for normal use.</string>
+    <string name="update_channel_debug_title">DEBUG</string>
+    <string name="update_channel_debug_desc">Development builds and prereleases, which may contain unfinished features.</string>
+    <string name="update_channel_switch_title">Switch update channel?</string>
+    <string name="update_channel_switch_confirm">Continue</string>
+    <string name="update_channel_switch_cancel">Cancel</string>
+    <string name="update_channel_installed">Installed</string>
+    <string name="update_channel_updates">Updates</string>
 
     <!-- Legal consent -->
     <string name="legal_welcome_title">Before you continue</string>

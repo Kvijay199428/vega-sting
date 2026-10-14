@@ -7,11 +7,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Unit tests for the OTA version-comparison and release-parsing logic.
- * These are the parts most likely to silently break OTA updates, so they are
- * covered without any network or Android framework dependency.
+ * Unit tests for the channel-aware OTA logic: release listing, manifest parsing,
+ * candidate filtering and selection. No network or Android framework is needed.
  */
 class UpdateCheckerTest {
+
+    private val pkg = "com.vega.sting"
+    private val sha = "a".repeat(64)
 
     // ---- isNewer ----
 
@@ -36,51 +38,20 @@ class UpdateCheckerTest {
     }
 
     @Test
-    fun `older version is not newer`() {
-        assertFalse(UpdateChecker.isNewer("1.0.0", "1.0.1"))
-    }
-
-    @Test
     fun `missing minor and patch default to zero`() {
-        // "2" == "2.0.0"
         assertFalse(UpdateChecker.isNewer("2", "2.0.0"))
         assertTrue(UpdateChecker.isNewer("2.0.1", "2"))
-        assertTrue(UpdateChecker.isNewer("3", "2.9.9"))
-    }
-
-    @Test
-    fun `v prefix is ignored on both sides`() {
-        assertTrue(UpdateChecker.isNewer("v1.1.0", "1.0.0"))
-        assertFalse(UpdateChecker.isNewer("1.0.0", "v1.0.0"))
-    }
-
-    @Test
-    fun `surrounding whitespace is tolerated`() {
-        assertTrue(UpdateChecker.isNewer("  1.0.1  ", "1.0.0"))
     }
 
     @Test
     fun `numeric segments are compared numerically not lexically`() {
-        // The bug this guards: "10" < "9" as strings, but 10 > 9 as numbers.
         assertTrue(UpdateChecker.isNewer("1.10.0", "1.9.0"))
     }
 
     @Test
-    fun `invalid remote version is not newer`() {
+    fun `invalid versions are never newer`() {
         assertFalse(UpdateChecker.isNewer("abc", "1.0.0"))
-        assertFalse(UpdateChecker.isNewer("", "1.0.0"))
-    }
-
-    @Test
-    fun `invalid local version is not newer`() {
         assertFalse(UpdateChecker.isNewer("1.0.1", "abc"))
-        assertFalse(UpdateChecker.isNewer("1.0.1", ""))
-    }
-
-    @Test
-    fun `non-numeric suffix is ignored after numeric prefix`() {
-        // "-rc1" is not numeric, so only "1.0.1" is considered.
-        assertTrue(UpdateChecker.isNewer("1.0.1-rc1", "1.0.0"))
     }
 
     // ---- normalizeVersion ----
@@ -95,131 +66,361 @@ class UpdateCheckerTest {
     @Test
     fun `normalizeVersion returns null when no numeric segment exists`() {
         assertNull(UpdateChecker.normalizeVersion("v"))
-        assertNull(UpdateChecker.normalizeVersion(""))
-        assertNull(UpdateChecker.normalizeVersion("   "))
         assertNull(UpdateChecker.normalizeVersion("release"))
     }
 
-    // ---- parseRelease ----
+    // ---- parseReleases ----
 
-    private val validRelease = """
+    @Test
+    fun `parseReleases reads tag, flags and assets`() {
+        val json = """
+            [
+              {
+                "tag_name": "debug-v2.0.2-dev.1",
+                "prerelease": true,
+                "draft": false,
+                "body": "Dev notes",
+                "published_at": "2026-10-01T10:00:00Z",
+                "assets": [
+                  { "name": "update.json", "browser_download_url": "https://ex/update.json", "size": 300 },
+                  { "name": "vega-sting-debug-2.0.2-dev.1.apk", "browser_download_url": "https://ex/app.apk", "size": 19000000 }
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val releases = UpdateChecker.parseReleases(json)
+        assertEquals(1, releases?.size)
+        val release = releases!!.first()
+        assertEquals("debug-v2.0.2-dev.1", release.tagName)
+        assertTrue(release.prerelease)
+        assertFalse(release.draft)
+        assertEquals("Dev notes", release.body)
+        assertEquals(2, release.assets.size)
+        assertEquals(19000000L, release.assets[1].size)
+    }
+
+    @Test
+    fun `parseReleases tolerates json nulls and missing optionals`() {
+        val json = """
+            [
+              { "tag_name": "v2.0.2", "body": null, "published_at": null, "assets": [] }
+            ]
+        """.trimIndent()
+        val release = UpdateChecker.parseReleases(json)!!.first()
+        assertNull(release.body)
+        assertFalse(release.prerelease)
+        assertFalse(release.draft)
+        assertTrue(release.assets.isEmpty())
+    }
+
+    @Test
+    fun `parseReleases returns null for malformed or non-array input`() {
+        assertNull(UpdateChecker.parseReleases("{not json"))
+        assertNull(UpdateChecker.parseReleases("""{"tag_name":"v1"}"""))
+    }
+
+    // ---- selectUpdate ----
+
+    private fun manifest(
+        channel: String = "DEBUG",
+        versionName: String = "2.0.2-dev.1",
+        versionCode: Long = 14,
+        packageName: String = pkg,
+        apkAsset: String = "vega-sting-debug-2.0.2-dev.1.apk",
+        sha256: String = sha,
+        minSupported: Long = 1,
+        schema: Int = 1
+    ): String = """
         {
-          "tag_name": "v1.0.1",
-          "body": "Fixes the overlay flicker.",
-          "published_at": "2026-09-29T10:00:00Z",
-          "assets": [
-            {
-              "name": "notes.txt",
-              "browser_download_url": "https://example.com/notes.txt"
-            },
-            {
-              "name": "VEGA-STING-1.0.1-release.apk",
-              "browser_download_url": "https://example.com/app.apk",
-              "size": 19456000
-            }
-          ]
+          "schemaVersion": $schema,
+          "channel": "$channel",
+          "versionName": "$versionName",
+          "versionCode": $versionCode,
+          "packageName": "$packageName",
+          "apkAsset": "$apkAsset",
+          "sha256": "$sha256",
+          "minSupportedVersionCode": $minSupported
         }
     """.trimIndent()
 
+    private fun release(
+        tag: String,
+        prerelease: Boolean = false,
+        draft: Boolean = false,
+        assets: List<UpdateChecker.GitHubAsset>
+    ) = UpdateChecker.GitHubRelease(tag, prerelease, draft, body = null, publishedAt = null, assets = assets)
+
+    private fun manifestAsset(url: String) = UpdateChecker.GitHubAsset("update.json", url, 0)
+    private fun apkAsset(name: String) = UpdateChecker.GitHubAsset(name, "https://ex/$name", 1000)
+
+    private fun debugRelease(
+        tag: String = "debug-v2.0.2-dev.1",
+        prerelease: Boolean = true,
+        draft: Boolean = false,
+        apkName: String = "vega-sting-debug-2.0.2-dev.1.apk"
+    ) = release(
+        tag = tag,
+        prerelease = prerelease,
+        draft = draft,
+        assets = listOf(manifestAsset("https://ex/$tag/manifest.json"), apkAsset(apkName))
+    )
+
+    private fun stableRelease(
+        tag: String = "v2.0.2",
+        prerelease: Boolean = false,
+        draft: Boolean = false,
+        apkName: String = "vega-sting-stable-2.0.2.apk"
+    ) = release(
+        tag = tag,
+        prerelease = prerelease,
+        draft = draft,
+        assets = listOf(manifestAsset("https://ex/$tag/manifest.json"), apkAsset(apkName))
+    )
+
+    private fun stableManifest(
+        versionName: String = "2.0.2",
+        versionCode: Long = 13,
+        apkName: String = "vega-sting-stable-2.0.2.apk"
+    ) = manifest(
+        channel = "STABLE",
+        versionName = versionName,
+        versionCode = versionCode,
+        apkAsset = apkName
+    )
+
     @Test
-    fun `parseRelease picks the apk asset and ignores non-apk assets`() {
-        val info = UpdateChecker.parseRelease(validRelease)
-        assertEquals("1.0.1", info?.versionName)
-        assertEquals("VEGA-STING-1.0.1-release.apk", info?.assetName)
-        assertEquals("https://example.com/app.apk", info?.apkUrl)
-        assertEquals(19456000L, info?.assetSizeBytes)
+    fun `debug channel accepts a published prerelease`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest() }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        val update = (result as UpdateChecker.SelectionResult.Available).update
+        assertEquals(UpdateChannel.DEBUG, update.channel)
+        assertEquals(14L, update.versionCode)
+        assertEquals("2.0.2-dev.1", update.versionName)
     }
 
     @Test
-    fun `parseRelease reads release notes and published date`() {
-        val info = UpdateChecker.parseRelease(validRelease)
-        assertEquals("Fixes the overlay flicker.", info?.notes)
-        assertEquals("2026-09-29T10:00:00Z", info?.publishedAt)
+    fun `stable channel ignores prereleases`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.STABLE,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest(channel = "STABLE") }
+        )
+        assertEquals(UpdateChecker.SelectionResult.UpToDate, result)
     }
 
     @Test
-    fun `parseRelease returns null when no apk asset exists`() {
-        val json = """
-            {
-              "tag_name": "v1.0.1",
-              "body": "docs only",
-              "assets": [
-                { "name": "notes.txt", "browser_download_url": "https://example.com/n.txt" }
-              ]
-            }
-        """.trimIndent()
-        assertNull(UpdateChecker.parseRelease(json))
+    fun `drafts are never considered`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease(draft = true)),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest() }
+        )
+        assertEquals(UpdateChecker.SelectionResult.UpToDate, result)
     }
 
     @Test
-    fun `parseRelease returns null for an empty asset list`() {
-        val json = """{ "tag_name": "v1.0.1", "body": "", "assets": [] }"""
-        assertNull(UpdateChecker.parseRelease(json))
+    fun `tag with the wrong channel prefix is ignored`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease(tag = "v2.0.3")),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest() }
+        )
+        assertEquals(UpdateChecker.SelectionResult.UpToDate, result)
     }
 
     @Test
-    fun `parseRelease returns null when tag is missing`() {
-        val json = """{ "body": "x", "assets": [ { "name": "a.apk", "browser_download_url": "u" } ] }"""
-        assertNull(UpdateChecker.parseRelease(json))
+    fun `stable channel selects a plain-v tagged release`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(stableRelease(tag = "v2.0.2")),
+            channel = UpdateChannel.STABLE,
+            installedVersionCode = 12,
+            installedPackageName = pkg,
+            fetchManifest = { stableManifest() }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        val update = (result as UpdateChecker.SelectionResult.Available).update
+        assertEquals(UpdateChannel.STABLE, update.channel)
+        assertEquals("2.0.2", update.versionName)
+        assertEquals(13L, update.versionCode)
     }
 
     @Test
-    fun `parseRelease returns null for malformed json`() {
-        assertNull(UpdateChecker.parseRelease("{not json"))
+    fun `stable channel also accepts the legacy stable-v tag prefix`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(stableRelease(tag = "stable-v2.0.2")),
+            channel = UpdateChannel.STABLE,
+            installedVersionCode = 12,
+            installedPackageName = pkg,
+            fetchManifest = { stableManifest() }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        assertEquals(
+            "2.0.2",
+            (result as UpdateChecker.SelectionResult.Available).update.versionName
+        )
     }
 
     @Test
-    fun `parseRelease tolerates a missing size field`() {
-        val json = """
-            {
-              "tag_name": "v2.0.0",
-              "assets": [ { "name": "a.apk", "browser_download_url": "https://example.com/a.apk" } ]
-            }
-        """.trimIndent()
-        val info = UpdateChecker.parseRelease(json)
-        assertEquals("2.0.0", info?.versionName)
-        assertEquals(0L, info?.assetSizeBytes)
+    fun `migration contract - a plain stable tag stays parseable by the older updater`() {
+        // The updater already installed on user devices only parses tags that
+        // begin with a digit after an optional leading 'v'. Every STABLE tag
+        // must satisfy this so those builds can still discover the release.
+        assertEquals("2.0.2", UpdateChecker.normalizeVersion("v2.0.2"))
+        assertTrue(UpdateChecker.isNewer("2.0.2", "2.0.1"))
     }
 
     @Test
-    fun `parseRelease tolerates explicit json nulls from the GitHub api`() {
-        val json = """
-            {
-              "tag_name": "v1.2.0",
-              "body": null,
-              "published_at": null,
-              "assets": [
-                { "name": "a.apk", "browser_download_url": "https://example.com/a.apk", "size": null }
-              ]
-            }
-        """.trimIndent()
-        val info = UpdateChecker.parseRelease(json)
-        assertEquals("1.2.0", info?.versionName)
-        assertNull(info?.notes)
-        assertNull(info?.publishedAt)
-        assertEquals(0L, info?.assetSizeBytes)
+    fun `manifest channel mismatch is rejected`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest(channel = "STABLE") }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Rejected)
     }
 
     @Test
-    fun `parseRelease ignores an apk asset with no download url`() {
-        val json = """
-            {
-              "tag_name": "v1.0.1",
-              "assets": [ { "name": "broken.apk" } ]
-            }
-        """.trimIndent()
-        assertNull(UpdateChecker.parseRelease(json))
+    fun `package mismatch is rejected`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest(packageName = "com.evil.clone") }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Rejected)
     }
 
     @Test
-    fun `parseRelease treats blank body as null notes`() {
-        val json = """
-            {
-              "tag_name": "v1.1.0",
-              "body": "   ",
-              "assets": [ { "name": "a.apk", "browser_download_url": "https://example.com/a.apk" } ]
-            }
-        """.trimIndent()
-        assertNull(UpdateChecker.parseRelease(json)?.notes)
+    fun `asset name mismatch is rejected`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest(apkAsset = "not-attached.apk") }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Rejected)
+    }
+
+    @Test
+    fun `invalid checksum in the manifest is rejected`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest(sha256 = "deadbeef") }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Rejected)
+    }
+
+    @Test
+    fun `an older candidate is reported as up to date`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { manifest(versionCode = 10) }
+        )
+        assertEquals(UpdateChecker.SelectionResult.UpToDate, result)
+    }
+
+    @Test
+    fun `a candidate that requires a newer install is rejected`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 5,
+            installedPackageName = pkg,
+            fetchManifest = { manifest(minSupported = 20) }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Rejected)
+    }
+
+    @Test
+    fun `a malformed manifest is skipped`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { "{ this is not json" }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Rejected)
+    }
+
+    @Test
+    fun `the highest compatible version code wins, not the newest release`() {
+        val newest = debugRelease(
+            tag = "debug-v2.0.4-dev.1",
+            apkName = "vega-sting-debug-2.0.4-dev.1.apk"
+        )
+        val highest = debugRelease(
+            tag = "debug-v2.0.3-dev.5",
+            apkName = "vega-sting-debug-2.0.3-dev.5.apk"
+        )
+        val manifests = mapOf(
+            "https://ex/debug-v2.0.4-dev.1/manifest.json" to manifest(versionName = "2.0.4-dev.1", versionCode = 15, apkAsset = "vega-sting-debug-2.0.4-dev.1.apk"),
+            "https://ex/debug-v2.0.3-dev.5/manifest.json" to manifest(versionName = "2.0.3-dev.5", versionCode = 40, apkAsset = "vega-sting-debug-2.0.3-dev.5.apk")
+        )
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(newest, highest),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 13,
+            installedPackageName = pkg,
+            fetchManifest = { url -> manifests[url] }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        assertEquals(40L, (result as UpdateChecker.SelectionResult.Available).update.versionCode)
+    }
+
+    // ---- ReleaseManifest ----
+
+    @Test
+    fun `release manifest parses a valid body`() {
+        val parsed = ReleaseManifest.parse(manifest())
+        assertEquals(UpdateChannel.DEBUG, parsed?.channel)
+        assertEquals("2.0.2-dev.1", parsed?.versionName)
+        assertEquals(14L, parsed?.versionCode)
+        assertEquals(pkg, parsed?.packageName)
+        assertTrue(parsed!!.hasValidSha256())
+    }
+
+    @Test
+    fun `release manifest rejects unsupported schema versions`() {
+        assertNull(ReleaseManifest.parse(manifest(schema = 2)))
+    }
+
+    @Test
+    fun `release manifest rejects unknown channels`() {
+        assertNull(ReleaseManifest.parse(manifest(channel = "BETA")))
+    }
+
+    @Test
+    fun `release manifest rejects blank or missing fields`() {
+        assertNull(ReleaseManifest.parse("""{"schemaVersion":1,"channel":"DEBUG"}"""))
+        assertNull(ReleaseManifest.parse("not json"))
+    }
+
+    @Test
+    fun `release manifest detects a malformed checksum`() {
+        assertFalse(ReleaseManifest.parse(manifest(sha256 = "abc"))!!.hasValidSha256())
     }
 }

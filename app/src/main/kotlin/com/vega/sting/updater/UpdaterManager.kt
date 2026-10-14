@@ -10,9 +10,13 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Orchestrates the OTA update flow: checking for a newer release and downloading
- * the APK with progress callbacks. All network work runs off the main thread;
- * result/progress callbacks are delivered on the main thread.
+ * Orchestrates the OTA update flow for a selected [UpdateChannel]: checking for
+ * a newer release and downloading the APK with progress callbacks. All network
+ * work runs off the main thread; result/progress callbacks are delivered on the
+ * main thread.
+ *
+ * Skipped versions are stored per channel, so a version skipped in DEBUG cannot
+ * suppress a STABLE release with the same version name (and vice versa).
  */
 class UpdaterManager(private val context: Context) {
 
@@ -22,7 +26,7 @@ class UpdaterManager(private val context: Context) {
     companion object {
         private const val TAG = "UpdaterManager"
         private const val PREFS_NAME = "vega_sting_updater"
-        private const val KEY_IGNORED_VERSION = "ignored_version_name"
+        private const val KEY_IGNORED_VERSION_PREFIX = "ignored_version_"
 
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
@@ -35,28 +39,35 @@ class UpdaterManager(private val context: Context) {
 
     /** Outcome of an update check, always delivered on the main thread. */
     sealed interface CheckResult {
-        /** A strictly newer release is available. */
+        /** A strictly newer, installable release is available. */
         data class UpdateAvailable(val update: UpdateChecker.UpdateInfo) : CheckResult
 
         /** The installed version is current, or the release was already ignored. */
         data object UpToDate : CheckResult
 
-        /** The release could not be fetched or parsed. */
+        /**
+         * Releases exist for the selected channel but none can replace the
+         * installed app (wrong package, incompatible signature, downgrade, …).
+         */
+        data class Incompatible(val reason: String) : CheckResult
+
+        /** The release could not be fetched or resolved. */
         data class Failed(val reason: String) : CheckResult
     }
 
     /**
-     * Runs an update check in the background and always reports exactly one
-     * [CheckResult] on the main thread, so callers can reliably clear a
-     * "checking" state instead of hanging on failure.
+     * Runs an update check for [channel] in the background and always reports
+     * exactly one [CheckResult] on the main thread, so callers can reliably
+     * clear a "checking" state instead of hanging on failure.
      *
-     * A manual check ([manual] = true) bypasses the 6-hour throttle and re-offers a
-     * previously skipped version.
+     * A manual check ([manual] = true) bypasses the 6-hour throttle and re-offers
+     * a previously skipped version.
      *
      * @param isRecording guards against starting a check mid-recording
      * @return true if a check was actually started; false if it was suppressed
      */
     fun checkForUpdates(
+        channel: UpdateChannel,
         manual: Boolean,
         isRecording: () -> Boolean = { false },
         onResult: (CheckResult) -> Unit
@@ -72,31 +83,28 @@ class UpdaterManager(private val context: Context) {
         recordCheckTime()
 
         Thread {
-            val latest = UpdateChecker.fetchLatestRelease(
-                BuildConfig.GITHUB_OWNER,
-                BuildConfig.GITHUB_REPO
+            val result = UpdateChecker.fetchUpdate(
+                owner = BuildConfig.GITHUB_OWNER,
+                repo = BuildConfig.GITHUB_REPO,
+                channel = channel,
+                installedVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                installedPackageName = context.packageName
             )
 
-            if (latest == null) {
-                val reason = "Could not reach the GitHub Releases API"
-                Log.w(TAG, reason)
-                mainHandler.post { onResult(CheckResult.Failed(reason)) }
-                return@Thread
+            val check = when (result) {
+                is UpdateChecker.SelectionResult.Available -> {
+                    if (result.update.versionName == ignoredVersion(channel)) {
+                        Log.i(TAG, "${result.update.versionName} was skipped for ${channel.label}")
+                        CheckResult.UpToDate
+                    } else {
+                        CheckResult.UpdateAvailable(result.update)
+                    }
+                }
+                UpdateChecker.SelectionResult.UpToDate -> CheckResult.UpToDate
+                is UpdateChecker.SelectionResult.Rejected -> CheckResult.Incompatible(result.reason)
+                is UpdateChecker.SelectionResult.Failed -> CheckResult.Failed(result.reason)
             }
-
-            val localVersion = BuildConfig.VERSION_NAME
-            if (!UpdateChecker.isNewer(latest.versionName, localVersion)) {
-                Log.i(TAG, "Already up to date (current=$localVersion, latest=${latest.versionName})")
-                mainHandler.post { onResult(CheckResult.UpToDate) }
-                return@Thread
-            }
-            if (latest.versionName == ignoredVersion()) {
-                Log.i(TAG, "Version ${latest.versionName} was ignored by user")
-                mainHandler.post { onResult(CheckResult.UpToDate) }
-                return@Thread
-            }
-
-            mainHandler.post { onResult(CheckResult.UpdateAvailable(latest)) }
+            mainHandler.post { onResult(check) }
         }.start()
         return true
     }
@@ -111,11 +119,13 @@ class UpdaterManager(private val context: Context) {
     }
 
     /**
-     * Downloads the APK for [update] into app-private storage. [onProgress] is
-     * invoked on the main thread with (bytesDownloaded, totalBytes); totalBytes is
-     * -1 when the server sends no Content-Length. [onDone] receives the downloaded
-     * [File], [onError] the failure reason. The download can be cancelled by the
-     * caller (e.g. dialog dismiss) via the returned cancellation state.
+     * Downloads and verifies the APK for [update] into app-private storage.
+     * [onProgress] is invoked on the main thread with (bytesDownloaded,
+     * totalBytes); totalBytes is -1 when the server sends no Content-Length.
+     * The download is validated (SHA-256, package, version, signing certificate)
+     * before [onDone] receives the [File]; a candidate that cannot be installed
+     * is deleted and reported through [onError]. The download can be cancelled
+     * by the caller (e.g. dialog dismiss) via the returned cancellation state.
      */
     fun download(
         update: UpdateChecker.UpdateInfo,
@@ -180,7 +190,23 @@ class UpdaterManager(private val context: Context) {
                     return@Thread
                 }
 
-                Log.i(TAG, "APK downloaded: ${target.absolutePath} (${target.length()} bytes)")
+                // Never offer an APK that Android would reject.
+                val validation = ApkValidator.validateDownloadedApk(
+                    context = context,
+                    file = target,
+                    expectedPackage = context.packageName,
+                    expectedVersionCode = update.versionCode,
+                    expectedVersionName = update.versionName,
+                    expectedSha256 = update.sha256
+                )
+                if (validation is ApkValidator.Result.Invalid) {
+                    Log.w(TAG, "Downloaded APK rejected: ${validation.reason}")
+                    target.delete()
+                    mainHandler.post { onError(validation.reason) }
+                    return@Thread
+                }
+
+                Log.i(TAG, "APK downloaded and verified: ${target.absolutePath} (${target.length()} bytes)")
                 mainHandler.post { onDone(target) }
             } catch (e: Exception) {
                 Log.e(TAG, "Download failed", e)
@@ -194,17 +220,19 @@ class UpdaterManager(private val context: Context) {
         return job
     }
 
-    /** Marks a version as ignored so it is not prompted again until the next release. */
-    fun ignoreVersion(versionName: String) {
-        prefs.edit().putString(KEY_IGNORED_VERSION, versionName).apply()
+    /** Marks a version as ignored for [channel] so it is not prompted again. */
+    fun ignoreVersion(channel: UpdateChannel, versionName: String) {
+        prefs.edit().putString(ignoredKey(channel), versionName).apply()
     }
 
-    /** Clears a previously ignored version (used by the manual "check for updates"). */
-    fun clearIgnoredVersion() {
-        prefs.edit().remove(KEY_IGNORED_VERSION).apply()
+    /** Clears the previously ignored version for [channel]. */
+    fun clearIgnoredVersion(channel: UpdateChannel) {
+        prefs.edit().remove(ignoredKey(channel)).apply()
     }
 
-    private fun ignoredVersion(): String? = prefs.getString(KEY_IGNORED_VERSION, null)
+    private fun ignoredVersion(channel: UpdateChannel): String? = prefs.getString(ignoredKey(channel), null)
+
+    private fun ignoredKey(channel: UpdateChannel): String = "$KEY_IGNORED_VERSION_PREFIX${channel.name}"
 
     private fun safeAssetName(name: String): String {
         val sanitized = name.replace(Regex("[^A-Za-z0-9._-]"), "_")

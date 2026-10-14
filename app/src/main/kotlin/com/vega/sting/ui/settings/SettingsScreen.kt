@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -20,10 +21,12 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import com.vega.sting.core.RecordingStateManager
+import com.vega.sting.R
 import com.vega.sting.legal.LegalDocument
 import com.vega.sting.overlay.OverlayPosition
 import com.vega.sting.settings.SettingsManager
 import com.vega.sting.settings.RecordingSettings
+import com.vega.sting.updater.UpdateChannel
 import com.vega.sting.ui.components.DetailHeaderBar
 import com.vega.sting.ui.legal.LegalDocumentDialog
 import com.vega.sting.storage.StorageHealthManager
@@ -67,6 +70,12 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         .collectAsState(initial = RecordingSettings.DEFAULTS.minimumFreeSpaceBytes)
     val audioFallback by settingsManager.audioFallbackEnabled.collectAsState(initial = true)
     val supportReminders by settingsManager.supportRemindersEnabled.collectAsState(initial = true)
+    
+    // Update channel: the persisted preference, falling back to the channel that
+    // was baked into the installed APK.
+    val selectedChannel by settingsManager.selectedUpdateChannel
+        .collectAsState(initial = UpdateChannel.installed())
+    var pendingChannel by remember { mutableStateOf<UpdateChannel?>(null) }
     
     var availableStorages by remember { mutableStateOf(StorageManager.getAvailableStorages(context)) }
     var showStoragePicker by remember { mutableStateOf(false) }
@@ -380,6 +389,17 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         }
 
         SettingsSection(title = "DUAL CAMERA") {
+            SettingsItem(label = "DUAL CAMERA MODE", value = "OFF", onClick = { })
+            SettingsItem(label = "LAYOUT", value = "AUTO", onClick = { })
+            SettingsItem(label = "PORTRAIT PLACEMENT", value = "FRONT TOP", onClick = { })
+            SettingsItem(label = "LANDSCAPE PLACEMENT", value = "FRONT LEFT", onClick = { })
+            SettingsItem(label = "SPLIT RATIO", value = "50:50", onClick = { })
+            SettingsItem(label = "QUALITY", value = "720P", onClick = { })
+            SettingsItem(label = "FPS", value = "30", onClick = { })
+            SettingsItem(label = "MIRROR FRONT", value = "OFF", onClick = { })
+            SettingsItem(label = "SCALING", value = "CROP TO FILL", onClick = { })
+            SettingsItem(label = "PREVIEW STACKED", value = "SHOW", onClick = { showDualCameraPreview = true })
+            SettingsItem(label = "RESET SETTINGS", value = "RESET", onClick = { })
         }
 
         SettingsSection(title = "HARDWARE") {
@@ -402,6 +422,41 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
                     onClick = { openLegalDocument = document }
                 )
             }
+        }
+
+        SettingsSection(title = stringResource(R.string.settings_update_channel)) {
+            SettingsItem(
+                label = stringResource(R.string.update_channel_installed),
+                value = "${UpdateChannel.installed().label} · ${com.vega.sting.BuildConfig.VERSION_NAME}"
+            )
+            SettingsItem(
+                label = stringResource(R.string.update_channel_updates),
+                value = selectedChannel.label
+            )
+            SettingsItem(
+                label = stringResource(R.string.update_channel_stable_title),
+                value = if (selectedChannel == UpdateChannel.STABLE) "SELECTED" else "TAP TO SWITCH",
+                onClick = if (selectedChannel == UpdateChannel.STABLE) null
+                else { { pendingChannel = UpdateChannel.STABLE } }
+            )
+            Text(
+                text = stringResource(R.string.update_channel_stable_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
+            )
+            SettingsItem(
+                label = stringResource(R.string.update_channel_debug_title),
+                value = if (selectedChannel == UpdateChannel.DEBUG) "SELECTED" else "TAP TO SWITCH",
+                onClick = if (selectedChannel == UpdateChannel.DEBUG) null
+                else { { pendingChannel = UpdateChannel.DEBUG } }
+            )
+            Text(
+                text = stringResource(R.string.update_channel_debug_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
+            )
         }
 
         SettingsSection(title = "ABOUT") {
@@ -431,6 +486,42 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         }
 
         Spacer(modifier = Modifier.height(24.dp))
+    }
+
+    pendingChannel?.let { target ->
+        val current = selectedChannel
+        AlertDialog(
+            onDismissRequest = { pendingChannel = null },
+            title = { Text(stringResource(R.string.update_channel_switch_title), color = AccentYellow) },
+            text = {
+                Text(
+                    buildString {
+                        append("You are switching from ${current.label} to ${target.label}. ")
+                        if (target == UpdateChannel.DEBUG) {
+                            append("DEBUG builds may contain unfinished features and will replace your current installation. ")
+                        }
+                        append("VEGA STING will check for the latest compatible ${target.label} build. Continue?")
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingChannel = null
+                    scope.launch {
+                        settingsManager.updateSelectedUpdateChannel(target)
+                        onCheckForUpdates()
+                    }
+                    Toast.makeText(context, "Checking ${target.label} channel…", Toast.LENGTH_SHORT).show()
+                }) {
+                    Text(stringResource(R.string.update_channel_switch_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingChannel = null }) {
+                    Text(stringResource(R.string.update_channel_switch_cancel))
+                }
+            }
+        )
     }
 
     openLegalDocument?.let { document ->

@@ -29,6 +29,9 @@ signing.properties
 *.ap_
 output-metadata.json
 
+# Staged release artifacts written by release.bat (APK + update.json + sha256)
+dist/
+
 # ============================================================
 # IDE
 # ============================================================

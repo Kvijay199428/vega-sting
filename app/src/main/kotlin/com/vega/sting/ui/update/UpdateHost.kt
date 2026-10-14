@@ -8,22 +8,28 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import com.vega.sting.BuildConfig
 import com.vega.sting.core.RecordingStateManager
+import com.vega.sting.settings.SettingsManager
 import com.vega.sting.ui.theme.AccentOrange
 import com.vega.sting.ui.theme.Panel
 import com.vega.sting.ui.theme.TextPrimary
 import com.vega.sting.updater.InstallController
+import com.vega.sting.updater.UpdateChannel
 import com.vega.sting.updater.UpdateChecker
 import com.vega.sting.updater.UpdaterManager
 import java.io.File
@@ -38,8 +44,15 @@ fun UpdateHost(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val scope = rememberCoroutineScope()
 
     val updater = remember { UpdaterManager(context.applicationContext) }
+    val settingsManager = remember { SettingsManager(context.applicationContext) }
+
+    // The selected channel drives which releases are checked. It is read fresh
+    // from DataStore when a check starts so a channel switch is always respected.
+    val selectedChannel by settingsManager.selectedUpdateChannel
+        .collectAsState(initial = UpdateChannel.installed())
 
     var available by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
     var downloadJob by remember { mutableStateOf<UpdaterManager.DownloadJob?>(null) }
@@ -50,6 +63,7 @@ fun UpdateHost(
     var checkFailed by remember { mutableStateOf(false) }
     var showUpToDate by remember { mutableStateOf(false) }
     var downloadError by remember { mutableStateOf<String?>(null) }
+    var incompatibleReason by remember { mutableStateOf<String?>(null) }
 
     
     var deferredUpdate by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
@@ -61,34 +75,41 @@ fun UpdateHost(
         isChecking = true
         checkFailed = false
 
-        if (manual) {
-            
-            updater.clearIgnoredVersion()
-        }
+        scope.launch {
+            // Read the persisted channel at check time so the settings screen can
+            // save a switch and immediately trigger a check without racing.
+            val channel = settingsManager.selectedUpdateChannel.first()
 
-        val started = updater.checkForUpdates(
-            manual = manual,
-            isRecording = { RecordingStateManager.isBusy() }
-        ) { result ->
-            isChecking = false
-            when (result) {
-                is UpdaterManager.CheckResult.UpdateAvailable -> {
-                    if (RecordingStateManager.isBusy()) {
-                        deferredUpdate = result.update
-                    } else {
-                        available = result.update
+            if (manual) {
+                updater.clearIgnoredVersion(channel)
+            }
+
+            val started = updater.checkForUpdates(
+                channel = channel,
+                manual = manual,
+                isRecording = { RecordingStateManager.isBusy() }
+            ) { result ->
+                isChecking = false
+                when (result) {
+                    is UpdaterManager.CheckResult.UpdateAvailable -> {
+                        if (RecordingStateManager.isBusy()) {
+                            deferredUpdate = result.update
+                        } else {
+                            available = result.update
+                        }
+                    }
+                    UpdaterManager.CheckResult.UpToDate -> if (manual) showUpToDate = true
+                    is UpdaterManager.CheckResult.Incompatible -> {
+                        if (manual) incompatibleReason = result.reason
+                    }
+                    is UpdaterManager.CheckResult.Failed -> {
+                        if (manual) checkFailed = true
                     }
                 }
-                UpdaterManager.CheckResult.UpToDate -> if (manual) showUpToDate = true
-                is UpdaterManager.CheckResult.Failed -> {
-                    
-                    if (manual) checkFailed = true
-                }
             }
-        }
 
-        
-        if (!started) isChecking = false
+            if (!started) isChecking = false
+        }
     }
 
     LaunchedEffect(autoCheckEnabled) {
@@ -115,12 +136,19 @@ fun UpdateHost(
         }
     }
 
-    if (isChecking && available == null && downloadJob == null && !checkFailed) {
+    if (isChecking && available == null && downloadJob == null && !checkFailed && incompatibleReason == null) {
         CheckingDialog()
     }
 
     if (checkFailed) {
         UpdateCheckFailedDialog(onDismiss = { checkFailed = false })
+    }
+
+    incompatibleReason?.let { reason ->
+        UpdateIncompatibleDialog(
+            reason = reason,
+            onDismiss = { incompatibleReason = null }
+        )
     }
 
     downloadError?.let { reason ->
@@ -131,7 +159,10 @@ fun UpdateHost(
     }
 
     if (showUpToDate) {
-        UpToDateDialog(onDismiss = { showUpToDate = false })
+        UpToDateDialog(
+            channelLabel = selectedChannel.label,
+            onDismiss = { showUpToDate = false }
+        )
     }
 
     val update = available
@@ -140,10 +171,11 @@ fun UpdateHost(
         if (job == null) {
             UpdateAvailableDialog(
                 update = update,
-                currentVersion = BuildConfig.VERSION_NAME,
+                installedChannel = UpdateChannel.installed(),
+                installedVersionName = BuildConfig.VERSION_NAME,
+                installedVersionCode = BuildConfig.VERSION_CODE.toLong(),
                 onDownload = {
-                    
-                    updater.clearIgnoredVersion()
+                    updater.clearIgnoredVersion(update.channel)
                     progress = 0f
                     downloadedBytes = 0L
                     downloadJob = updater.download(
@@ -172,7 +204,7 @@ fun UpdateHost(
                     )
                 },
                 onSkip = {
-                    updater.ignoreVersion(update.versionName)
+                    updater.ignoreVersion(update.channel, update.versionName)
                     available = null
                 },
                 onLater = { available = null }

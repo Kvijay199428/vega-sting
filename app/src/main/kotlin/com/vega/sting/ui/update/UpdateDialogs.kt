@@ -35,6 +35,7 @@ import com.vega.sting.ui.theme.Panel
 import com.vega.sting.ui.theme.Success
 import com.vega.sting.ui.theme.TextPrimary
 import com.vega.sting.ui.theme.TextSecondary
+import com.vega.sting.updater.UpdateChannel
 import com.vega.sting.updater.UpdateChecker
 
 /**
@@ -42,9 +43,9 @@ import com.vega.sting.updater.UpdateChecker
  * app's existing black / orange / monospace terminal theme.
  */
 
-/** Shown when the manual check finds nothing newer. */
+/** Shown when the manual check finds nothing newer for the selected channel. */
 @Composable
-fun UpToDateDialog(onDismiss: () -> Unit) {
+fun UpToDateDialog(channelLabel: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Panel,
@@ -60,7 +61,35 @@ fun UpToDateDialog(onDismiss: () -> Unit) {
         },
         text = {
             Text(
-                text = "You already have the latest version.",
+                text = "You already have the latest $channelLabel build.",
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        confirmButton = {
+            TerminalTextButton(text = stringResource(R.string.update_close), onClick = onDismiss)
+        }
+    )
+}
+
+/** Shown when a candidate release exists but cannot replace this installation. */
+@Composable
+fun UpdateIncompatibleDialog(reason: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Panel,
+        titleContentColor = AccentOrange,
+        textContentColor = TextPrimary,
+        shape = RoundedCornerShape(4.dp),
+        title = {
+            Text(
+                text = stringResource(R.string.update_incompatible_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        text = {
+            Text(
+                text = reason.ifBlank { stringResource(R.string.update_incompatible_body) },
                 fontFamily = FontFamily.Monospace
             )
         },
@@ -136,7 +165,9 @@ fun UpdateDownloadFailedDialog(reason: String, onDismiss: () -> Unit) {
 @Composable
 fun UpdateAvailableDialog(
     update: UpdateChecker.UpdateInfo,
-    currentVersion: String,
+    installedChannel: UpdateChannel,
+    installedVersionName: String,
+    installedVersionCode: Long,
     onDownload: () -> Unit,
     onSkip: () -> Unit,
     onLater: () -> Unit
@@ -156,7 +187,7 @@ fun UpdateAvailableDialog(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "${update.versionName}  →  current $currentVersion",
+                    text = "${update.channel.label} ${update.versionName}  (build ${update.versionCode})",
                     style = MaterialTheme.typography.bodySmall,
                     color = Success,
                     fontFamily = FontFamily.Monospace
@@ -169,6 +200,27 @@ fun UpdateAvailableDialog(
                     .heightIn(max = 320.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                Text(
+                    text = "Installed: ${installedChannel.label} $installedVersionName (build $installedVersionCode)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary,
+                    fontFamily = FontFamily.Monospace
+                )
+                if (update.channel != installedChannel) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = if (update.channel == UpdateChannel.DEBUG) {
+                            "You are switching to the DEBUG channel. DEBUG builds may contain " +
+                                "unfinished features and will replace your current installation."
+                        } else {
+                            "You are switching to the STABLE channel."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AccentOrange,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = "${update.assetName}  (${formatBytes(update.assetSizeBytes)})",
                     style = MaterialTheme.typography.labelSmall,

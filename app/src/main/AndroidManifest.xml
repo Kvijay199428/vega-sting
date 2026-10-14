@@ -38,6 +38,11 @@
         <meta-data
             android:name="developer_repository"
             android:value="https://github.com/Kvijay199428/VEGA-STING" />
+        <!-- Baked in per channel by the Gradle product flavor; the release
+             scripts verify this value with aapt2 before publishing. -->
+        <meta-data
+            android:name="DEFAULT_UPDATE_CHANNEL"
+            android:value="${defaultUpdateChannel}" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

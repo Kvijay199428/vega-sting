@@ -35,6 +35,9 @@ class UpdaterManager(private val context: Context) {
         private const val AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L // 6 hours
 
         private const val KEY_LAST_AUTO_CHECK = "last_auto_check_ms"
+
+        /** Version code of a system-installer launch that hasn't been confirmed. */
+        private const val KEY_PENDING_INSTALL_VERSION = "pending_install_version_code"
     }
 
     /** Outcome of an update check, always delivered on the main thread. */
@@ -46,9 +49,8 @@ class UpdaterManager(private val context: Context) {
         data object UpToDate : CheckResult
 
         /**
-         * The selected channel's newest release is older than the installed
-         * build, so switching to it would be an Android version downgrade. The
-         * channel preference is kept; [reason] explains the situation.
+         * The selected channel has published nothing the updater can use yet.
+         * The channel preference is kept; [reason] explains the situation.
          */
         data class ChannelAhead(val reason: String) : CheckResult
 
@@ -97,7 +99,11 @@ class UpdaterManager(private val context: Context) {
                 installedVersionCode = BuildConfig.VERSION_CODE.toLong(),
                 installedPackageName = context.packageName,
                 installedChannel = UpdateChannel.installed(),
-                installedVersionName = BuildConfig.VERSION_NAME
+                installedVersionName = BuildConfig.VERSION_NAME,
+                // A manual check (the channel switch and "Check for Updates")
+                // may offer the target channel's newest build even when it is
+                // older; the throttled automatic check stays quiet instead.
+                allowSwitchDowngrade = manual
             )
 
             val check = when (result) {
@@ -243,6 +249,27 @@ class UpdaterManager(private val context: Context) {
     private fun ignoredVersion(channel: UpdateChannel): String? = prefs.getString(ignoredKey(channel), null)
 
     private fun ignoredKey(channel: UpdateChannel): String = "$KEY_IGNORED_VERSION_PREFIX${channel.name}"
+
+    /**
+     * Records that the system installer was launched for [versionCode].
+     *
+     * Only downgrade attempts are recorded. `Intent.ACTION_VIEW` gives no result
+     * callback, so if Android refuses the install (it won't replace a newer app
+     * with an older one) the only way to notice is that the running version is
+     * still not [versionCode] on the next launch.
+     */
+    fun markInstallLaunched(versionCode: Long) {
+        prefs.edit().putLong(KEY_PENDING_INSTALL_VERSION, versionCode).apply()
+    }
+
+    /** The unconfirmed installer launch's version code, or null when there is none. */
+    fun pendingInstallVersionCode(): Long? =
+        prefs.getLong(KEY_PENDING_INSTALL_VERSION, -1L).takeIf { it > 0L }
+
+    /** Clears the pending installer launch, whether it succeeded or was refused. */
+    fun clearPendingInstall() {
+        prefs.edit().remove(KEY_PENDING_INSTALL_VERSION).apply()
+    }
 
     private fun safeAssetName(name: String): String {
         val sanitized = name.replace(Regex("[^A-Za-z0-9._-]"), "_")

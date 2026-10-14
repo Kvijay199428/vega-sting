@@ -27,6 +27,9 @@
     <string name="update_incompatible_title">Update Not Compatible</string>
     <string name="update_incompatible_body">The available release can\'t be installed over your current app.</string>
     <string name="update_channel_blocked_title">Channel Not Available Yet</string>
+    <string name="update_older_build_warning">Heads up: this build is older than the one installed. Android won\'t replace a newer app with an older one, so this install may be blocked.</string>
+    <string name="update_install_blocked_title">Install Not Completed</string>
+    <string name="update_install_blocked_body">Android refused to install the older build — it won\'t replace a newer app with an older one. Your current build is unchanged. Stay on it, or install a newer build from this channel once one is published.</string>
 
     <!-- Update channel selection -->
     <string name="settings_update_channel">UPDATE CHANNEL</string>

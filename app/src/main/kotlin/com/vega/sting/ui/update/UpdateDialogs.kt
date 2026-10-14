@@ -110,6 +110,38 @@ fun UpdateChannelSwitchBlockedDialog(reason: String, onDismiss: () -> Unit) {
     )
 }
 
+/**
+ * Shown on the next launch after a recorded install attempt by an older build
+ * never took effect. Android refuses to replace a newer app with an older one,
+ * and `ACTION_VIEW` gives no result callback to detect that at the time.
+ */
+@Composable
+fun UpdateInstallBlockedDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Panel,
+        titleContentColor = AccentOrange,
+        textContentColor = TextPrimary,
+        shape = RoundedCornerShape(4.dp),
+        title = {
+            Text(
+                text = stringResource(R.string.update_install_blocked_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        text = {
+            Text(
+                text = stringResource(R.string.update_install_blocked_body),
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        confirmButton = {
+            TerminalTextButton(text = stringResource(R.string.update_close), onClick = onDismiss)
+        }
+    )
+}
+
 /** Shown when a candidate release exists but cannot replace this installation. */
 @Composable
 fun UpdateIncompatibleDialog(reason: String, onDismiss: () -> Unit) {
@@ -254,6 +286,15 @@ fun UpdateAvailableDialog(
                         } else {
                             "You are switching to the STABLE channel."
                         },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AccentOrange,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                if (update.versionCode < installedVersionCode) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.update_older_build_warning),
                         style = MaterialTheme.typography.labelSmall,
                         color = AccentOrange,
                         fontFamily = FontFamily.Monospace

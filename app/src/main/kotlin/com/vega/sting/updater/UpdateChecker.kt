@@ -62,11 +62,11 @@ object UpdateChecker {
         data object UpToDate : SelectionResult
 
         /**
-         * The selected channel's newest release is older than the installed
-         * build, so switching to it would be a version *downgrade* Android will
-         * not perform. [reason] explains this to the user. This is distinct
-         * from [Rejected]: nothing is wrong with the release, the device is
-         * simply ahead of the channel and must wait for a newer release.
+         * The selected channel has published no release the updater can use yet
+         * (for example a freshly created channel). [reason] explains that and
+         * confirms the preference is kept until one is published. Distinct from
+         * [Rejected], which means releases exist but none can replace this
+         * installation.
          */
         data class ChannelAhead(val reason: String) : SelectionResult
 
@@ -92,6 +92,8 @@ object UpdateChecker {
      * @param installedPackageName the installed package id
      * @param installedChannel the channel the installed build was published on
      * @param installedVersionName the installed build's version name
+     * @param allowSwitchDowngrade whether a channel switch may offer a release
+     *   whose version code is lower than the installed build (manual checks only)
      */
     fun fetchUpdate(
         owner: String,
@@ -100,7 +102,8 @@ object UpdateChecker {
         installedVersionCode: Long,
         installedPackageName: String,
         installedChannel: UpdateChannel,
-        installedVersionName: String
+        installedVersionName: String,
+        allowSwitchDowngrade: Boolean = false
     ): SelectionResult {
         val endpoint = "https://api.github.com/repos/$owner/$repo/releases?per_page=$RELEASES_PER_PAGE"
         val body = httpGetString(endpoint, "application/vnd.github+json")
@@ -116,7 +119,8 @@ object UpdateChecker {
             installedPackageName = installedPackageName,
             fetchManifest = { url -> httpGetString(url, "application/octet-stream") },
             installedChannel = installedChannel,
-            installedVersionName = installedVersionName
+            installedVersionName = installedVersionName,
+            allowSwitchDowngrade = allowSwitchDowngrade
         )
     }
 
@@ -198,17 +202,23 @@ object UpdateChecker {
      * Selects the highest compatible release for [channel].
      *
      * A *channel switch* (the selected channel differs from the channel the
-     * installed build came from) is allowed to install an **equal** version
-     * code -- Android permits an equal-code reinstall but never a lower one --
-     * so a device can move STABLE <-> DEBUG in either direction. A same-channel
-     * update still has to be a real bump: a strictly higher version code, or an
-     * equal code with a newer version name (the `x.y.z-dev.N` line shares the
-     * stable's version code).
+     * installed build came from) offers that channel's newest valid release.
+     * It may install an **equal** version code -- Android permits an equal-code
+     * reinstall but never a lower one -- and, when [allowSwitchDowngrade] is set
+     * (a manual check), even a lower one: the switch is a deliberate reinstall
+     * and Android's refusal of a true downgrade is warned about before the
+     * download and reported after the attempt. A same-channel update still has
+     * to be a real bump: a strictly higher version code, or an equal code with a
+     * newer version name (the `x.y.z-dev.N` line shares the stable's version
+     * code).
      *
      * @param installedChannel the channel the installed build was published on
      *   (defaults to the selected channel, i.e. no switch)
      * @param installedVersionName the installed build's version name, used to
      *   order equal version codes within the same channel
+     * @param allowSwitchDowngrade whether a channel switch may offer a release
+     *   whose version code is lower than the installed build (manual checks only,
+     *   so the automatic check stays quiet on a downgrade)
      * @param fetchManifest downloads an asset URL to its text body (injected so
      *   this function stays pure and testable)
      */
@@ -219,7 +229,8 @@ object UpdateChecker {
         installedPackageName: String,
         fetchManifest: (String) -> String?,
         installedChannel: UpdateChannel = channel,
-        installedVersionName: String = ""
+        installedVersionName: String = "",
+        allowSwitchDowngrade: Boolean = false
     ): SelectionResult {
         val switchingChannel = channel != installedChannel
 
@@ -301,7 +312,12 @@ object UpdateChecker {
                 continue
             }
 
-            // Track the newest release seen (regardless of installability) by
+            if (installedVersionCode < manifest.minSupportedVersionCode) {
+                reasons += "${release.tagName}: requires at least version code ${manifest.minSupportedVersionCode}"
+                continue
+            }
+
+            // Track the newest release this install could actually take, by
             // version code, breaking ties with the version name so a
             // `x.y.z-dev.2` outranks a `x.y.z-dev.1` sharing the same code.
             if (manifest.versionCode > highestSeenCode ||
@@ -314,8 +330,11 @@ object UpdateChecker {
 
             val installable =
                 if (switchingChannel) {
-                    // A switch may reinstall the same code (never a lower one).
-                    manifest.versionCode >= installedVersionCode
+                    // A switch is a deliberate reinstall: it may install the same
+                    // code, and -- for a manual check -- even a lower one. Android
+                    // refuses a true downgrade, which the UI warns about before
+                    // the download and reports after the install attempt.
+                    allowSwitchDowngrade || manifest.versionCode >= installedVersionCode
                 } else {
                     manifest.versionCode > installedVersionCode ||
                         (manifest.versionCode == installedVersionCode &&
@@ -324,11 +343,6 @@ object UpdateChecker {
                 }
             if (!installable) {
                 reasons += "${release.tagName}: version code ${manifest.versionCode} is not newer than $installedVersionCode"
-                continue
-            }
-
-            if (installedVersionCode < manifest.minSupportedVersionCode) {
-                reasons += "${release.tagName}: requires at least version code ${manifest.minSupportedVersionCode}"
                 continue
             }
 
@@ -354,24 +368,13 @@ object UpdateChecker {
 
         best?.let { return SelectionResult.Available(it) }
 
-        // Nothing installable. If the device is already ahead of everything this
-        // channel has published: explain it for a channel switch (a downgrade
-        // Android will refuse), otherwise report the ordinary up-to-date result.
+        // Nothing installable. When the newest release this install could take is
+        // not newer than what's running, the ordinary answer is "up to date".
+        // This also keeps the automatic check quiet after a channel switch whose
+        // target channel only has older builds: a downgrade is offered on manual
+        // checks only (see [allowSwitchDowngrade]), so the switch prompt comes
+        // from the check the settings screen triggers, not from a periodic one.
         if (highestSeenCode != Long.MIN_VALUE && highestSeenCode <= installedVersionCode) {
-            if (switchingChannel) {
-                val latest = highestSeenName?.let { " (latest: $it, build $highestSeenCode)" }.orEmpty()
-                val installed = if (installedVersionName.isBlank()) {
-                    "${installedChannel.label} (build $installedVersionCode)"
-                } else {
-                    "${installedChannel.label} $installedVersionName (build $installedVersionCode)"
-                }
-                return SelectionResult.ChannelAhead(
-                    "You're running $installed, which is newer than the latest " +
-                        "${channel.label} release$latest. Android can't install an older build " +
-                        "over a newer one. Your channel is set to ${channel.label}; you'll be " +
-                        "offered the next ${channel.label} release automatically."
-                )
-            }
             return SelectionResult.UpToDate
         }
         return SelectionResult.Rejected(reasons.firstOrNull() ?: "No compatible release found")

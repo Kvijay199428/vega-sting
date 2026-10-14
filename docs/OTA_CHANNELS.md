@@ -111,12 +111,15 @@ Candidate eligibility depends on whether the user is **switching channels**:
 
 * Same channel — a real bump is required: a strictly higher `versionCode`, or an
   equal code with a newer `versionName` (the shared‑code `x.y.z-dev.N` line).
-* Channel switch — an **equal** `versionCode` is installable (an equal‑code
-  reinstall); a lower one is not. When the selected channel's newest release is
-  *older* than the installed build, the check reports a **channel‑ahead**
-  situation: Android cannot downgrade, the channel preference is kept, and the
-  user is told they will get the next release on that channel. It never claims
-  the other channel's build is already installed.
+* Channel switch — the selected channel's **newest valid release** is offered, so
+  both channels' newest builds are reachable from either side. An **equal**
+  `versionCode` is a plain equal‑code reinstall. On a **manual** check (the
+  channel‑switch confirm and **Check for updates**) a *lower* `versionCode` is
+  offered too — a deliberate reinstall — but the update dialog warns that it is
+  older and Android refuses to replace a newer app with an older one. The
+  throttled automatic check never offers a downgrade, so it stays quiet until a
+  newer build ships. Android's `INSTALL_FAILED_VERSION_DOWNGRADE` gives no result
+  callback, so a refused downgrade is reported on the next launch.
 
 ## 5. Building a release
 
@@ -153,11 +156,13 @@ version name is never touched.
 * Selecting a channel in Settings shows a confirmation dialog; **Continue** saves
   the preference and immediately checks the chosen channel, **Cancel** leaves the
   previous preference untouched.
-* If the chosen channel's newest release is older than the installed build, the
-  switch cannot be installed (Android downgrade rule). The preference is still
-  saved and a **channel‑ahead** dialog explains that the next release on that
-  channel will be offered automatically — it never claims the channel is already
-  installed.
+* Switching to a channel whose newest release is older than the installed build
+  still offers that build on a manual check, with an in‑dialog warning that
+  Android may refuse the downgrade. The preference is saved either way. If
+  Android refuses the install, an **install‑not‑completed** dialog explains it on
+  the next launch. If the chosen channel has published nothing yet, a
+  **channel‑ahead** dialog says so instead — it never claims the channel is
+  already installed.
 * Downloads go to app‑private storage and are validated (SHA‑256, package,
   version, signer) before the system installer is opened. The user must confirm
   the install; nothing is ever auto‑installed.

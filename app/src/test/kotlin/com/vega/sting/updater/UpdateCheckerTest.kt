@@ -412,10 +412,32 @@ class UpdateCheckerTest {
     }
 
     @Test
-    fun `switching to a channel whose newest build is older explains the downgrade`() {
+    fun `a manual switch offers the target channel's newest build even when older`() {
         // Device on DEBUG 2.0.3-dev.1 (code 14) selecting STABLE, whose newest is
-        // 2.0.2 (code 13). Android cannot downgrade, so this must not masquerade
-        // as "up to date" -- it is reported as a channel-ahead situation.
+        // 2.0.2 (code 13). The switch is a deliberate reinstall, so a manual
+        // check offers the channel's newest build even though Android may refuse
+        // the downgrade (the UI warns about it).
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(stableRelease(tag = "v2.0.2")),
+            channel = UpdateChannel.STABLE,
+            installedVersionCode = 14,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.DEBUG,
+            installedVersionName = "2.0.3-dev.1",
+            allowSwitchDowngrade = true,
+            fetchManifest = { stableManifest(versionName = "2.0.2", versionCode = 13) }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        val update = (result as UpdateChecker.SelectionResult.Available).update
+        assertEquals(UpdateChannel.STABLE, update.channel)
+        assertEquals("2.0.2", update.versionName)
+        assertEquals(13L, update.versionCode)
+    }
+
+    @Test
+    fun `an automatic switch to an older build stays quiet as up to date`() {
+        // Without allowSwitchDowngrade (the throttled automatic check), an older
+        // target build must not prompt: only manual checks offer a downgrade.
         val result = UpdateChecker.selectUpdate(
             releases = listOf(stableRelease(tag = "v2.0.2")),
             channel = UpdateChannel.STABLE,
@@ -425,9 +447,33 @@ class UpdateCheckerTest {
             installedVersionName = "2.0.3-dev.1",
             fetchManifest = { stableManifest(versionName = "2.0.2", versionCode = 13) }
         )
-        assertTrue(result is UpdateChecker.SelectionResult.ChannelAhead)
-        val reason = (result as UpdateChecker.SelectionResult.ChannelAhead).reason
-        assertTrue(reason.contains("2.0.2"))
+        assertEquals(UpdateChecker.SelectionResult.UpToDate, result)
+    }
+
+    @Test
+    fun `a manual switch offers the channel's newest when several are older`() {
+        val older = stableRelease(tag = "v2.0.1", apkName = "vega-sting-stable-2.0.1.apk")
+        val newest = stableRelease(tag = "v2.0.2", apkName = "vega-sting-stable-2.0.2.apk")
+        val manifests = mapOf(
+            "https://ex/v2.0.1/manifest.json" to stableManifest(
+                versionName = "2.0.1", versionCode = 12, apkName = "vega-sting-stable-2.0.1.apk"
+            ),
+            "https://ex/v2.0.2/manifest.json" to stableManifest(
+                versionName = "2.0.2", versionCode = 13, apkName = "vega-sting-stable-2.0.2.apk"
+            )
+        )
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(older, newest),
+            channel = UpdateChannel.STABLE,
+            installedVersionCode = 15,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.DEBUG,
+            installedVersionName = "2.0.4-dev.1",
+            allowSwitchDowngrade = true,
+            fetchManifest = { url -> manifests[url] }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        assertEquals(13L, (result as UpdateChecker.SelectionResult.Available).update.versionCode)
     }
 
     @Test

@@ -59,12 +59,14 @@ fun UpdateHost(
     var progress by remember { mutableFloatStateOf(0f) }
     var downloadedBytes by remember { mutableLongStateOf(0L) }
     var readyToInstall by remember { mutableStateOf<File?>(null) }
+    var readyVersionCode by remember { mutableStateOf<Long?>(null) }
     var isChecking by remember { mutableStateOf(false) }
     var checkFailed by remember { mutableStateOf(false) }
     var showUpToDate by remember { mutableStateOf(false) }
     var downloadError by remember { mutableStateOf<String?>(null) }
     var incompatibleReason by remember { mutableStateOf<String?>(null) }
     var channelAheadReason by remember { mutableStateOf<String?>(null) }
+    var installBlocked by remember { mutableStateOf(false) }
 
     
     var deferredUpdate by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
@@ -120,6 +122,18 @@ fun UpdateHost(
         if (autoCheckEnabled) startCheck(manual = false)
     }
 
+    // Report an install Android refused. A downgrade record is written only when
+    // an older build is handed to the installer (ACTION_VIEW gives no result), so
+    // if the running version still isn't the one we launched, the install never
+    // took effect.
+    LaunchedEffect(Unit) {
+        val pending = updater.pendingInstallVersionCode() ?: return@LaunchedEffect
+        updater.clearPendingInstall()
+        if (BuildConfig.VERSION_CODE.toLong() != pending) {
+            installBlocked = true
+        }
+    }
+
     LaunchedEffect(manualCheckToken) {
         if (manualCheckToken > 0) startCheck(manual = true)
     }
@@ -171,6 +185,10 @@ fun UpdateHost(
         )
     }
 
+    if (installBlocked) {
+        UpdateInstallBlockedDialog(onDismiss = { installBlocked = false })
+    }
+
     if (showUpToDate) {
         UpToDateDialog(
             channelLabel = selectedChannel.label,
@@ -209,6 +227,7 @@ fun UpdateHost(
                             progress = 0f
                             downloadedBytes = 0L
                             readyToInstall = file
+                            readyVersionCode = update.versionCode
                         },
                         onError = { message ->
                             downloadJob = null
@@ -257,12 +276,22 @@ fun UpdateHost(
         } else {
             UpdateReadyToInstallDialog(
                 onInstall = {
+                    // A launch supersedes any earlier unconfirmed one.
+                    updater.clearPendingInstall()
+                    val targetCode = readyVersionCode
+                    if (targetCode != null && targetCode < BuildConfig.VERSION_CODE.toLong()) {
+                        // Downgrade attempt: Android may refuse it, and we can only
+                        // tell on the next launch.
+                        updater.markInstallLaunched(targetCode)
+                    }
                     InstallController.startInstall(activity, apk)
                     updater.purgeStaleDownloads(keep = apk)
                     readyToInstall = null
+                    readyVersionCode = null
                 },
                 onDismiss = {
                     readyToInstall = null
+                    readyVersionCode = null
                     updater.purgeStaleDownloads(keep = apk)
                 }
             )

@@ -46,6 +46,17 @@ class SettingsManager(private val context: Context) {
         val SUPPORT_REMINDERS_ENABLED = booleanPreferencesKey("support_reminders_enabled")
         val LAST_SUPPORT_REMINDER_AT = longPreferencesKey("last_support_reminder_at")
         val NEXT_SUPPORT_REMINDER_AT = longPreferencesKey("next_support_reminder_at")
+
+        // DUAL CAMERA
+        val DUAL_ENABLED = booleanPreferencesKey("dual_enabled")
+        val DUAL_LAYOUT = stringPreferencesKey("dual_layout")
+        val DUAL_FRONT_ON_TOP = booleanPreferencesKey("dual_front_on_top")
+        val DUAL_FRONT_ON_LEFT = booleanPreferencesKey("dual_front_on_left")
+        val DUAL_SPLIT_RATIO = stringPreferencesKey("dual_split_ratio")
+        val DUAL_QUALITY = stringPreferencesKey("dual_quality")
+        val DUAL_FPS = intPreferencesKey("dual_fps")
+        val DUAL_MIRROR_FRONT = booleanPreferencesKey("dual_mirror_front")
+        val DUAL_SCALING = stringPreferencesKey("dual_scaling")
     }
 
     val videoCodec: Flow<String> = context.dataStore.data.map { it[VIDEO_CODEC] ?: "H.265" }
@@ -78,6 +89,25 @@ class SettingsManager(private val context: Context) {
     val supportRemindersEnabled: Flow<Boolean> = context.dataStore.data.map { it[SUPPORT_REMINDERS_ENABLED] ?: true }
     val lastSupportReminderAt: Flow<Long> = context.dataStore.data.map { it[LAST_SUPPORT_REMINDER_AT] ?: 0L }
     val nextSupportReminderAt: Flow<Long> = context.dataStore.data.map { it[NEXT_SUPPORT_REMINDER_AT] ?: 0L }
+
+    /**
+     * The complete dual-camera configuration, rebuilt (and sanitised) from
+     * persisted values. This is the single source of truth the Settings screen,
+     * the live preview and the recording service all observe.
+     */
+    val dualCameraConfig: Flow<com.vega.sting.camera.DualCameraConfig> = context.dataStore.data.map { prefs ->
+        com.vega.sting.camera.DualCameraConfig.fromStored(
+            enabled = prefs[DUAL_ENABLED],
+            layout = prefs[DUAL_LAYOUT],
+            frontOnTop = prefs[DUAL_FRONT_ON_TOP],
+            frontOnLeft = prefs[DUAL_FRONT_ON_LEFT],
+            splitRatio = prefs[DUAL_SPLIT_RATIO],
+            quality = prefs[DUAL_QUALITY],
+            fps = prefs[DUAL_FPS],
+            mirrorFront = prefs[DUAL_MIRROR_FRONT],
+            scalingMode = prefs[DUAL_SCALING]
+        )
+    }
 
     val splitRecordingEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[SPLIT_RECORDING_ENABLED] ?: true }
@@ -227,5 +257,29 @@ class SettingsManager(private val context: Context) {
             it.remove(LAST_SUPPORT_REMINDER_AT)
             it.remove(NEXT_SUPPORT_REMINDER_AT)
         }
+    }
+
+    /** Persists the complete dual-camera configuration. */
+    suspend fun updateDualCameraConfig(config: com.vega.sting.camera.DualCameraConfig) {
+        val safe = config.sanitized()
+        context.dataStore.edit {
+            it[DUAL_ENABLED] = safe.enabled
+            it[DUAL_LAYOUT] = safe.layout.name
+            it[DUAL_FRONT_ON_TOP] = safe.frontOnTop
+            it[DUAL_FRONT_ON_LEFT] = safe.frontOnLeft
+            it[DUAL_SPLIT_RATIO] = safe.splitRatio.name
+            it[DUAL_QUALITY] = safe.quality.name
+            it[DUAL_FPS] = safe.fps
+            it[DUAL_MIRROR_FRONT] = safe.mirrorFront
+            it[DUAL_SCALING] = safe.scalingMode.name
+        }
+    }
+
+    /**
+     * Restores every dual-camera default. Only the dual-camera keys are
+     * touched; unrelated recording preferences are never modified.
+     */
+    suspend fun resetDualCameraConfig() {
+        updateDualCameraConfig(com.vega.sting.camera.DualCameraConfig.DEFAULTS)
     }
 }

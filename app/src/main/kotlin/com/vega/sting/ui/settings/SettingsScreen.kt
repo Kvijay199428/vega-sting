@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
@@ -21,6 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.widget.Toast
 import com.vega.sting.core.RecordingStateManager
@@ -37,7 +39,9 @@ import com.vega.sting.storage.StorageManager
 import com.vega.sting.storage.StorageType
 import com.vega.sting.ui.theme.*
 import com.vega.sting.camera.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsScreen(
@@ -85,6 +89,21 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     var showSignatureEditor by remember { mutableStateOf(false) }
     var showDualCameraPreview by remember { mutableStateOf(false) }
     var signatureDraft by remember { mutableStateOf(signature) }
+
+    // Dual-camera configuration (single source of truth) and capability state.
+    val dualConfig by settingsManager.dualCameraConfig
+        .collectAsState(initial = DualCameraConfig.DEFAULTS)
+    var dualCapability by remember { mutableStateOf<DualCameraCapabilityResult?>(null) }
+    var checkingDualCapability by remember { mutableStateOf(false) }
+    var capabilityCheckTrigger by remember { mutableStateOf(0) }
+
+    LaunchedEffect(dualConfig.enabled, capabilityCheckTrigger) {
+        checkingDualCapability = true
+        dualCapability = withContext(Dispatchers.IO) {
+            DualCameraCapabilityChecker(context).check()
+        }
+        checkingDualCapability = false
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -182,6 +201,20 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             },
             containerColor = Panel,
             shape = MaterialTheme.shapes.extraSmall
+        )
+    }
+
+    if (showDualCameraPreview) {
+        val configuration = LocalConfiguration.current
+        val portraitOutput = when (orientationMode) {
+            "PORTRAIT" -> true
+            "LANDSCAPE" -> false
+            else -> configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
+        }
+        DualCameraPreviewDialog(
+            config = dualConfig,
+            portraitOutput = portraitOutput,
+            onDismiss = { showDualCameraPreview = false }
         )
     }
 
@@ -391,19 +424,16 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             )
         }
 
-        SettingsSection(title = "DUAL CAMERA") {
-            SettingsItem(label = "DUAL CAMERA MODE", value = "OFF", onClick = { })
-            SettingsItem(label = "LAYOUT", value = "AUTO", onClick = { })
-            SettingsItem(label = "PORTRAIT PLACEMENT", value = "FRONT TOP", onClick = { })
-            SettingsItem(label = "LANDSCAPE PLACEMENT", value = "FRONT LEFT", onClick = { })
-            SettingsItem(label = "SPLIT RATIO", value = "50:50", onClick = { })
-            SettingsItem(label = "QUALITY", value = "720P", onClick = { })
-            SettingsItem(label = "FPS", value = "30", onClick = { })
-            SettingsItem(label = "MIRROR FRONT", value = "OFF", onClick = { })
-            SettingsItem(label = "SCALING", value = "CROP TO FILL", onClick = { })
-            SettingsItem(label = "PREVIEW STACKED", value = "SHOW", onClick = { showDualCameraPreview = true })
-            SettingsItem(label = "RESET SETTINGS", value = "RESET", onClick = { })
-        }
+        DualCameraSettingsSection(
+            config = dualConfig,
+            capability = dualCapability,
+            checkingCapability = checkingDualCapability,
+            recordingActive = isRecording,
+            onConfigChange = { scope.launch { settingsManager.updateDualCameraConfig(it) } },
+            onReset = { scope.launch { settingsManager.resetDualCameraConfig() } },
+            onPreview = { showDualCameraPreview = true },
+            onRefreshCapability = { capabilityCheckTrigger++ }
+        )
 
         SettingsSection(title = "HARDWARE") {
             SettingsItem(

@@ -37,6 +37,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import com.vega.sting.camera.DeviceProfileManager
+import com.vega.sting.camera.DualCameraCapabilityChecker
+import com.vega.sting.camera.DualRecordingPipeline
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -69,6 +73,10 @@ class RecordingService : LifecycleService() {
     private lateinit var db: AppDatabase
     private lateinit var profileManager: DeviceProfileManager
     private lateinit var settingsManager: SettingsManager
+
+    /** Non-null only while a dual-camera (composited) video session is active. */
+    private var dualRecordingManager: DualRecordingPipeline? = null
+    private var usingDualPipeline = false
 
     private var recordingType = RecordingType.VIDEO
     private var session: RecordingSession? = null
@@ -186,6 +194,8 @@ class RecordingService : LifecycleService() {
         currentPartIndex = 1
         currentSegmentFile = null
         lastStorageStatus = status
+        usingDualPipeline = false
+        dualRecordingManager = null
 
         RecordingStateManager.updateState(
             if (newType == RecordingType.AUDIO) RecordingState.STARTING_AUDIO else RecordingState.STARTING_VIDEO
@@ -218,17 +228,49 @@ class RecordingService : LifecycleService() {
                 withTimeoutOrNull(1_500) { profileManager.getOrScanProfile() }
                 val orientationMode = settingsManager.orientationMode.first()
                 val limit = if (settings.splitRecordingEnabled) settings.videoSegmentLimitBytes else 0L
-                videoRecordingManager.startVideoRecording(
-                    directory,
-                    activeSession,
-                    orientationMode,
-                    limit,
-                    settings.splitRecordingEnabled,
-                    videoListener
-                )
+
+                // Dual camera is used only when the user enabled it *and* the
+                // device can genuinely capture both cameras concurrently. When
+                // it cannot, the existing single-camera pipeline records instead.
+                val dualConfig = settingsManager.dualCameraConfig.first()
+                val dualReady = dualConfig.enabled && withContext(Dispatchers.IO) {
+                    DualCameraCapabilityChecker(this@RecordingService).check().canOfferDualCamera
+                }
+
+                if (dualReady) {
+                    usingDualPipeline = true
+                    val pipeline = DualRecordingPipeline(this@RecordingService)
+                    dualRecordingManager = pipeline
+                    pipeline.startVideoRecording(
+                        directory,
+                        activeSession,
+                        dualConfig,
+                        isPortraitForMode(orientationMode),
+                        limit,
+                        settings.splitRecordingEnabled,
+                        videoListener
+                    )
+                } else {
+                    usingDualPipeline = false
+                    videoRecordingManager.startVideoRecording(
+                        directory,
+                        activeSession,
+                        orientationMode,
+                        limit,
+                        settings.splitRecordingEnabled,
+                        videoListener
+                    )
+                }
                 startStorageMonitor()
             }
         }
+    }
+
+    /** Resolves the composite orientation for the current device posture. */
+    private fun isPortraitForMode(orientationMode: String): Boolean = when (orientationMode) {
+        "PORTRAIT" -> true
+        "LANDSCAPE" -> false
+        else -> resources.configuration.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE
     }
 
     private fun handleStopAction() {
@@ -269,7 +311,12 @@ class RecordingService : LifecycleService() {
                 audioRecordingManager.stopAudioRecording(reason)
                 onRecordingSessionEnded(reason, null)
             }
-            RecordingType.VIDEO -> videoRecordingManager.stopRecording(reason)
+            RecordingType.VIDEO ->
+                if (usingDualPipeline) {
+                    dualRecordingManager?.stopRecording(reason)
+                } else {
+                    videoRecordingManager.stopRecording(reason)
+                }
         }
     }
 
@@ -286,6 +333,8 @@ class RecordingService : LifecycleService() {
         session = null
         currentSegmentFile = null
         stopInProgress = false
+        dualRecordingManager = null
+        usingDualPipeline = false
 
         if (error != null) {
             activeVideoSpec = null
@@ -426,7 +475,7 @@ class RecordingService : LifecycleService() {
         }
 
         override fun onRecorderError(message: String) {
-            onRecorderError(message)
+            this@RecordingService.onRecorderError(message)
         }
     }
 
@@ -446,7 +495,7 @@ class RecordingService : LifecycleService() {
         }
 
         override fun onRecorderError(message: String) {
-            onRecorderError(message)
+            this@RecordingService.onRecorderError(message)
         }
 
         override fun onRecordingFinalized(reason: FinalizationReason, error: String?) {
@@ -652,7 +701,11 @@ class RecordingService : LifecycleService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val typeLabel = if (recordingType == RecordingType.AUDIO) "AUDIO" else "VIDEO"
+        val typeLabel = when {
+            recordingType == RecordingType.AUDIO -> "AUDIO"
+            usingDualPipeline -> "VIDEO (DUAL CAM)"
+            else -> "VIDEO"
+        }
         val free = recordingDirectory?.let {
             StorageHealthManager.formatFileSize(StorageHealthManager.getFreeSpaceBytes(it))
         } ?: "--"

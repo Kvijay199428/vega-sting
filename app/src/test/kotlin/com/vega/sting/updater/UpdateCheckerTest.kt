@@ -582,4 +582,47 @@ class UpdateCheckerTest {
     fun `release manifest detects a malformed checksum`() {
         assertFalse(ReleaseManifest.parse(manifest(sha256 = "abc"))!!.hasValidSha256())
     }
+
+    @Test
+    fun `release manifest parses the optional apkSizeBytes`() {
+        val withSize = """
+            {
+              "schemaVersion": 1,
+              "channel": "STABLE",
+              "versionName": "2.0.5",
+              "versionCode": 17,
+              "packageName": "$pkg",
+              "apkAsset": "vega-sting-stable-2.0.5.apk",
+              "apkSizeBytes": 34567890,
+              "sha256": "$sha",
+              "minSupportedVersionCode": 1
+            }
+        """.trimIndent()
+        assertEquals(34567890L, ReleaseManifest.parse(withSize)?.apkSizeBytes)
+    }
+
+    @Test
+    fun `release manifest defaults apkSizeBytes to zero when absent`() {
+        // Manifests published before the field existed must keep parsing.
+        assertEquals(0L, ReleaseManifest.parse(manifest())?.apkSizeBytes)
+    }
+
+    @Test
+    fun `update info prefers the manifest size and falls back to the asset size`() {
+        val fromManifest = UpdateChecker.UpdateInfo(
+            channel = UpdateChannel.STABLE,
+            versionName = "2.0.5",
+            versionCode = 17,
+            apkUrl = "https://ex/app.apk",
+            assetName = "vega-sting-stable-2.0.5.apk",
+            sha256 = sha,
+            notes = null,
+            assetSizeBytes = 1000L,
+            manifestSizeBytes = 2000L
+        )
+        assertEquals(2000L, fromManifest.expectedSizeBytes)
+
+        val assetOnly = fromManifest.copy(manifestSizeBytes = 0L)
+        assertEquals(1000L, assetOnly.expectedSizeBytes)
+    }
 }

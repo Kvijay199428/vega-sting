@@ -14,6 +14,9 @@ import android.util.Log
 import android.util.Size
 import android.view.Surface
 import com.vega.sting.database.FinalizationReason
+import com.vega.sting.orientation.OrientationManager
+import com.vega.sting.overlay.OverlayLayer
+import com.vega.sting.overlay.OverlaySettingsLoader
 import com.vega.sting.recording.ActiveRecordingSpec
 import com.vega.sting.recording.RecordingSession
 import com.vega.sting.recording.RecordingSessionManager
@@ -38,6 +41,7 @@ class DualRecordingPipeline(private val context: Context) {
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
     private var compositor: DualCameraCompositor? = null
+    private var overlayLayer: OverlayLayer? = null
     private var recorder: MediaRecorder? = null
 
     private var frontDevice: CameraDevice? = null
@@ -65,10 +69,17 @@ class DualRecordingPipeline(private val context: Context) {
     private var started = false
 
     private var config: DualCameraConfig = DualCameraConfig.DEFAULTS
+    private var orientationMode: String = "FOLLOW_SENSOR"
     private var portraitOutput = true
     private var outputWidth = 720
     private var outputHeight = 1280
     private var capability: DualCameraCapabilityResult? = null
+
+    // Locked for the whole session: the same policy the single-camera recorder
+    // uses, so a rebuild or a rollover can never re-orient the composite.
+    private var orientationSession: DualCameraOrientation.Session? = null
+
+    private val orientationManager = OrientationManager(context)
 
     private val mainHandler by lazy { Handler(context.mainLooper) }
 
@@ -79,7 +90,7 @@ class DualRecordingPipeline(private val context: Context) {
         directory: File,
         session: RecordingSession,
         config: DualCameraConfig,
-        portraitOutput: Boolean,
+        orientationMode: String,
         segmentLimitBytes: Long,
         splitEnabled: Boolean,
         listener: VideoRecordingListener
@@ -88,7 +99,7 @@ class DualRecordingPipeline(private val context: Context) {
         this.session = session
         this.directory = directory
         this.config = config
-        this.portraitOutput = portraitOutput
+        this.orientationMode = orientationMode
         this.segmentLimitBytes = segmentLimitBytes
         this.splitEnabled = splitEnabled
         this.partIndex = session.startPartIndex.coerceAtLeast(1)
@@ -98,9 +109,6 @@ class DualRecordingPipeline(private val context: Context) {
         this.stopping = false
         this.gapPossible = false
         this.started = false
-
-        outputWidth = config.quality.width(portraitOutput)
-        outputHeight = config.quality.height(portraitOutput)
 
         val bg = HandlerThread("DualRecorder").also { it.start() }
         thread = bg
@@ -123,12 +131,60 @@ class DualRecordingPipeline(private val context: Context) {
         backSourceSize = selectSourceSize(result.previewSizesBack)
         frontSourceSize = selectSourceSize(result.previewSizesFront)
 
+        // Resolve rotation exactly once, on this background thread (the
+        // orientation manager may block briefly for its first reading).
+        orientationManager.start()
+        val sessionOrientation = try {
+            DualCameraOrientation.resolve(
+                context = context,
+                orientationMode = orientationMode,
+                frontCameraId = result.frontCameraId,
+                backCameraId = result.backCameraId,
+                orientationManager = orientationManager
+            )
+        } catch (e: Exception) {
+            fail("Could not resolve the recording orientation: ${e.message}")
+            return
+        }
+        orientationSession = sessionOrientation
+        portraitOutput = sessionOrientation.portraitOutput
+        outputWidth = config.quality.width(portraitOutput)
+        outputHeight = config.quality.height(portraitOutput)
+
         val compositor = DualCameraCompositor(h)
         this.compositor = compositor
-        compositor.setConfig(config, portraitOutput)
-        compositor.setRenderingEnabled(false)
+        // The overlay is resolved once for the session, exactly like the
+        // orientation, so a rebuild or rollover cannot re-read or drift from the
+        // single-camera watermark.
+        overlayLayer = createOverlayLayer()
+        compositor.setOverlayLayer(overlayLayer)
+        applyCompositorConfig(compositor)
 
         startPipeline()
+    }
+
+    /**
+     * Builds the watermark overlay for the locked composite size. The composite
+     * is already upright (the recorder keeps `setOrientationHint(0)`), so the
+     * overlay needs no counter-rotation: rotation hint 0 and the shared artwork
+     * produce the same watermark as the single-camera path.
+     */
+    private fun createOverlayLayer(): OverlayLayer = OverlayLayer(
+        width = outputWidth,
+        height = outputHeight,
+        settings = OverlaySettingsLoader.load(context),
+        scaledDensity = context.resources.displayMetrics.density *
+            context.resources.configuration.fontScale,
+        rotationHint = 0
+    )
+
+    /** Applies the locked config + orientation to a compositor instance. */
+    private fun applyCompositorConfig(compositor: DualCameraCompositor) {
+        compositor.setConfig(config, portraitOutput)
+        orientationSession?.let {
+            compositor.setFeedRotation(it.frontRotationDegrees, it.backRotationDegrees)
+        }
+        compositor.setRenderingEnabled(false)
     }
 
     private fun selectSourceSize(sizes: List<Size>): Size {
@@ -156,8 +212,7 @@ class DualRecordingPipeline(private val context: Context) {
                 fail("Could not attach the compositor output.")
                 return
             }
-            compositor.setConfig(config, portraitOutput)
-            compositor.setRenderingEnabled(false)
+            applyCompositorConfig(compositor)
 
             val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val result = capability ?: run { fail("No capability result"); return }
@@ -464,6 +519,10 @@ class DualRecordingPipeline(private val context: Context) {
         compositor?.releaseInputs()
         compositor?.setRenderingEnabled(false)
         if (!keepDevices) {
+            // Release the overlay while the compositor's EGL context is still
+            // current, then drop the compositor and its context.
+            overlayLayer?.release()
+            overlayLayer = null
             compositor?.release()
             compositor = null
         }
@@ -481,6 +540,10 @@ class DualRecordingPipeline(private val context: Context) {
         }
         frontDevice = null
         backDevice = null
+        try {
+            orientationManager.stop()
+        } catch (_: Exception) {
+        }
         thread?.quitSafely()
         thread = null
         handler = null

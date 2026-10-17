@@ -11,6 +11,7 @@ import android.opengl.GLES20
 import android.os.Handler
 import android.util.Log
 import android.view.Surface
+import com.vega.sting.overlay.OverlayLayer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -65,8 +66,21 @@ class DualCameraCompositor(private val renderHandler: Handler) {
     private var config = DualCameraConfig.DEFAULTS
     private var portraitOutput = false
 
+    // Optional watermark drawn over the composite (shared with the single-camera
+    // recorder). Owned by the caller: the compositor only draws it and drops the
+    // reference on release, so preview and recording can attach independent
+    // layers without double-freeing.
+    private var overlayLayer: OverlayLayer? = null
+
+    // Per-feed clockwise rotation baked into the composite (0/90/180/270). Set
+    // from the same [RotationResolver] the single-camera recorder uses, so the
+    // two pipelines can never disagree about orientation.
+    private var frontRotationDegrees = 0
+    private var backRotationDegrees = 0
+
     private val texMatrixFront = FloatArray(16)
     private val texMatrixBack = FloatArray(16)
+    private var loggedOrientation = false
 
     private val posBuffer = nativeFloatBuffer(8)
     private val texBuffer = nativeFloatBuffer(8)
@@ -171,8 +185,28 @@ class DualCameraCompositor(private val renderHandler: Handler) {
         this.portraitOutput = portraitOutput
     }
 
+    /**
+     * Sets the clockwise rotation baked into each feed so both are upright in the
+     * composite canvas. The recorder keeps `setOrientationHint(0)` precisely
+     * because this rotation is applied to the pixels.
+     */
+    fun setFeedRotation(frontDegrees: Int, backDegrees: Int) {
+        frontRotationDegrees = frontDegrees.mod(360)
+        backRotationDegrees = backDegrees.mod(360)
+    }
+
     fun setRenderingEnabled(enabled: Boolean) {
         renderingEnabled = enabled
+    }
+
+    /**
+     * Attaches (or clears) the watermark overlay. The layer is initialised
+     * lazily on the render thread, where the compositor's EGL context is
+     * current; the caller retains ownership and is responsible for releasing it
+     * before the compositor's GL context goes away.
+     */
+    fun setOverlayLayer(layer: OverlayLayer?) {
+        overlayLayer = layer
     }
 
     private fun onFrameAvailable(role: DualCameraRole) {
@@ -215,8 +249,20 @@ class DualCameraCompositor(private val renderHandler: Handler) {
                 frontSourceWidth = frontInput.sourceWidth,
                 frontSourceHeight = frontInput.sourceHeight,
                 backSourceWidth = backInput.sourceWidth,
-                backSourceHeight = backInput.sourceHeight
+                backSourceHeight = backInput.sourceHeight,
+                frontRotationDegrees = frontRotationDegrees,
+                backRotationDegrees = backRotationDegrees
             )
+
+            if (!loggedOrientation) {
+                loggedOrientation = true
+                Log.i(
+                    TAG,
+                    "Composite orientation: output=${outputWidth}x$outputHeight portrait=$portraitOutput " +
+                        "frontSrc=${frontInput.sourceWidth}x${frontInput.sourceHeight} frontRot=$frontRotationDegrees " +
+                        "backSrc=${backInput.sourceWidth}x${backInput.sourceHeight} backRot=$backRotationDegrees"
+                )
+            }
 
             GLES20.glViewport(0, 0, outputWidth, outputHeight)
             GLES20.glClearColor(0f, 0f, 0f, 1f)
@@ -231,6 +277,16 @@ class DualCameraCompositor(private val renderHandler: Handler) {
 
             GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
 
+            // The overlay is authored against the whole output frame, so it is
+            // drawn after the two clipped feeds with the full viewport restored.
+            overlayLayer?.let { layer ->
+                if (layer.hasContent) {
+                    GLES20.glViewport(0, 0, outputWidth, outputHeight)
+                    layer.updateIfNeeded()
+                    layer.drawOverlayQuad()
+                }
+            }
+
             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
         } catch (e: Exception) {
             Log.e(TAG, "Composite render failed", e)
@@ -242,9 +298,11 @@ class DualCameraCompositor(private val renderHandler: Handler) {
      *
      * `glViewport`/`glScissor` map the normalised device coordinates onto the
      * region, and the quad half-extents ([FeedPlacement.scaleX]/[scaleY])
-     * implement crop/letterbox without ever stretching the image. The full-quad
-     * texture-coordinate pairing is identical to the app's proven single-camera
-     * overlay renderer, so orientation matches the recorded output exactly.
+     * implement crop/letterbox without ever stretching the image. The camera
+     * image is NOT pre-rotated by the camera itself, so this is the only place
+     * orientation is corrected: [DualCameraGeometry.cameraTextureCoordinates]
+     * picks the per-feed pairing that turns a sensor-native feed upright on
+     * screen, while [texMatrix] stays untouched.
      */
     private fun drawFeed(placement: FeedPlacement, textureId: Int, texMatrix: FloatArray) {
         val r = placement.region
@@ -268,12 +326,11 @@ class DualCameraCompositor(private val renderHandler: Handler) {
         posBuffer.put(sx * flip).put(sy)
         posBuffer.position(0)
 
-        // Proven camera pairing for the full quad: BL(0,1) BR(0,0) TL(1,1) TR(1,0).
+        // At rotation 0 this is exactly the single-camera recorder's pairing;
+        // a quarter/half turn reassigns the corners so the picture is turned
+        // clockwise on screen. See DualCameraGeometry.cameraTextureCoordinates.
         texBuffer.position(0)
-        texBuffer.put(0f).put(1f)
-        texBuffer.put(0f).put(0f)
-        texBuffer.put(1f).put(1f)
-        texBuffer.put(1f).put(0f)
+        texBuffer.put(DualCameraGeometry.cameraTextureCoordinates(placement.rotationDegrees))
         texBuffer.position(0)
 
         GLES20.glUseProgram(program)
@@ -309,6 +366,7 @@ class DualCameraCompositor(private val renderHandler: Handler) {
     }
 
     fun release() {
+        overlayLayer = null
         releaseInputs()
         try {
             if (program != 0) {

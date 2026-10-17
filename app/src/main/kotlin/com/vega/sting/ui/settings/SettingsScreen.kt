@@ -99,10 +99,23 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
 
     LaunchedEffect(dualConfig.enabled, capabilityCheckTrigger) {
         checkingDualCapability = true
-        dualCapability = withContext(Dispatchers.IO) {
+        val result = withContext(Dispatchers.IO) {
             DualCameraCapabilityChecker(context).check()
         }
+        dualCapability = result
         checkingDualCapability = false
+
+        // A device that cannot run dual capture must not be left with the mode
+        // switched on: clear the persisted flag so every control — including the
+        // mode toggle — starts and stays disabled. A transient enumeration error
+        // only disables the rows and leaves the stored preference alone.
+        val terminalUnsupported =
+            result.status == DualCameraCapabilityStatus.NO_CAMERAS ||
+                result.status == DualCameraCapabilityStatus.MISSING_FACING_CAMERA ||
+                result.status == DualCameraCapabilityStatus.CONCURRENT_UNSUPPORTED
+        if (terminalUnsupported && dualConfig.enabled) {
+            settingsManager.updateDualCameraConfig(dualConfig.copy(enabled = false))
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -213,6 +226,7 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         }
         DualCameraPreviewDialog(
             config = dualConfig,
+            orientationMode = orientationMode,
             portraitOutput = portraitOutput,
             onDismiss = { showDualCameraPreview = false }
         )

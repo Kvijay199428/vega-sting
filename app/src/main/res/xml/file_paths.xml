@@ -14,10 +14,14 @@
         name="cache"
         path="."/>
 
-    <!-- OTA updater: downloaded release APKs are written to
-         context.filesDir/updates and shared with the system
-         Package Installer through this provider. Without this
-         entry FileProvider.getUriForFile() throws. -->
+    <!-- OTA updater: verified release APKs are published to the public
+         Download/VEGA-STING/ folder (see ApkStore). On API 26-28 they are
+         plain files under the external storage root, which the
+         external-path entry above already covers; on API 29+ they are
+         MediaStore content:// URIs handled without FileProvider.
+
+         The legacy files-path entry is retained so an APK downloaded by an
+         older build into filesDir/updates can still be shared if present. -->
     <files-path
         name="updates"
         path="updates/"/>

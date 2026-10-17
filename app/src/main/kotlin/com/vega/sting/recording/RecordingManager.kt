@@ -19,15 +19,16 @@ import com.vega.sting.camera.DeviceProfile
 import com.vega.sting.camera.DeviceProfileManager
 import com.vega.sting.camera.DynamicFallbackEngine
 import com.vega.sting.camera.RecordingPreset
+import com.vega.sting.camera.RotationResolver
 import com.vega.sting.camera.VideoPreference
 import com.vega.sting.camera.resolveEffectiveVideoCodec
 import com.vega.sting.database.AppDatabase
 import com.vega.sting.database.CameraSessionTelemetry
 import com.vega.sting.database.FinalizationReason
 import com.vega.sting.orientation.OrientationManager
-import com.vega.sting.overlay.OverlayPosition
 import com.vega.sting.overlay.OverlayRenderer
 import com.vega.sting.overlay.OverlaySettings
+import com.vega.sting.overlay.OverlaySettingsLoader
 import com.vega.sting.settings.SettingsManager
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -127,9 +128,6 @@ class RecordingManager(private val context: Context) {
     companion object {
         private const val TAG = "RecordingManager"
 
-
-        private const val ORIENTATION_OFFSET_DEGREES = 0
-
         fun generateFileName(isAudio: Boolean): String {
             val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-MM-SS", Locale.getDefault()).format(Date())
             val extension = if (isAudio) ".m4a" else ".mp4"
@@ -227,26 +225,22 @@ class RecordingManager(private val context: Context) {
             val sensorOrientation = characteristics.get(
                 CameraCharacteristics.SENSOR_ORIENTATION
             ) ?: 0
-            val deviceRotationDegrees = when (deviceRotation) {
-                Surface.ROTATION_90 -> 90
-                Surface.ROTATION_180 -> 180
-                Surface.ROTATION_270 -> 270
-                else -> 0
-            }
+            val deviceRotationDegrees = RotationResolver.surfaceRotationToDegrees(deviceRotation)
 
             val isFrontFacing = characteristics.get(
                 CameraCharacteristics.LENS_FACING
             ) == CameraCharacteristics.LENS_FACING_FRONT
 
-            val rawRotationDegrees = if (isFrontFacing) {
-                (sensorOrientation + deviceRotationDegrees) % 360
-            } else {
-                (sensorOrientation - deviceRotationDegrees + 360) % 360
-            }
-            resolvedRotationDegrees = (rawRotationDegrees + 360 + ORIENTATION_OFFSET_DEGREES) % 360
+            // Shared with the dual-camera compositor so both pipelines agree.
+            resolvedRotationDegrees = RotationResolver.resolveDegrees(
+                sensorOrientation = sensorOrientation,
+                isFrontFacing = isFrontFacing,
+                deviceRotationDegrees = deviceRotationDegrees,
+                offsetDegrees = RotationResolver.ORIENTATION_OFFSET_DEGREES
+            )
             Log.i(TAG, "Rotation: sensorOrientation=$sensorOrientation mode=$orientationMode " +
                     "deviceRot=$deviceRotation degrees=$deviceRotationDegrees front=$isFrontFacing " +
-                    "raw=$rawRotationDegrees offset=$ORIENTATION_OFFSET_DEGREES hint=$resolvedRotationDegrees")
+                    "offset=${RotationResolver.ORIENTATION_OFFSET_DEGREES} hint=$resolvedRotationDegrees")
 
             val profile = try { profileManager.getProfile() } catch (e: Exception) { null }
             val requestedCodec = loadRequestedCodec()
@@ -592,22 +586,8 @@ class RecordingManager(private val context: Context) {
     }
 
     private fun loadOverlaySettings(): OverlaySettings {
-        return try {
-            val settingsManager = SettingsManager(context)
-            runBlocking {
-                val watermarkEnabled = settingsManager.watermarkEnabled.first()
-                OverlaySettings(
-                    timestampEnabled = watermarkEnabled && settingsManager.timestampEnabled.first(),
-                    timestampPosition = OverlayPosition.from(settingsManager.timestampPosition.first()),
-                    timestampFormat = settingsManager.timestampFormat.first(),
-                    signature = if (watermarkEnabled) settingsManager.signature.first() else "",
-                    signaturePosition = OverlayPosition.from(settingsManager.signaturePosition.first()),
-                    textSizeSp = settingsManager.overlayTextSize.first()
-                )
-            }
-        } catch (_: Exception) {
-            OverlaySettings()
-        }
+        // Unified with the dual-camera recorder/preview: one shared loader.
+        return OverlaySettingsLoader.load(context)
     }
 
     private fun resolvePreset(

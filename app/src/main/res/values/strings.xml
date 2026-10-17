@@ -43,6 +43,21 @@
     <string name="update_channel_installed">Installed</string>
     <string name="update_channel_updates">Updates</string>
 
+    <!-- Update dialog additions (storage preflight, manual downgrade) -->
+    <string name="update_try_again">Try Again</string>
+    <string name="update_insufficient_storage_title">Not Enough Storage</string>
+    <string name="update_insufficient_storage_body">There isn\'t enough free space to download this update safely. Free up some space, then try again. Your update channel and this release are unchanged.</string>
+    <string name="update_try_download_again">Try Download Again</string>
+    <string name="update_check_for_updates">Check for Updates</string>
+    <string name="update_downgrade_body">The newest build on this channel is OLDER than the one you have installed. Android will not replace a newer app with an older one, so this cannot be installed as a normal update. You can download the older APK and install it manually.</string>
+    <string name="update_downgrade_data_warning">Installing it manually requires uninstalling VEGA STING first. Your recordings on shared storage are kept, but app data (settings, timestamps, in-app database) is removed. The downloaded APK is kept in Download/VEGA-STING/ so you can install it after uninstalling.</string>
+    <string name="update_download_manual">Download for Manual Install</string>
+    <string name="update_wait_for_newer">Wait for a Newer Build</string>
+    <string name="update_manual_install_title">Saved for Manual Install</string>
+    <string name="update_manual_install_steps">To install this older build:\n1. Open your file manager and go to %1$s\n2. Uninstall VEGA STING (your recordings are kept).\n3. Open the saved APK to install it.</string>
+    <string name="update_debug_build_banner">DEBUG BUILD · prerelease channel</string>
+    <string name="update_debug_build_banner_action">Manage channel</string>
+
     <!-- Legal consent -->
     <string name="legal_welcome_title">Before you continue</string>
     <string name="legal_welcome_body">VEGA STING records audio and video on this device only. Nothing is uploaded, and the developer never receives your recordings. Network access is used solely to check for updates. Read both documents below and accept to continue. Until you accept, no permission is requested and no recording feature is available.</string>

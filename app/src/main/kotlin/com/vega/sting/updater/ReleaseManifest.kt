@@ -17,7 +17,13 @@ data class ReleaseManifest(
     val packageName: String,
     val apkAsset: String,
     val sha256: String,
-    val minSupportedVersionCode: Long
+    val minSupportedVersionCode: Long,
+    /**
+     * APK size in bytes as declared by the manifest, or 0 when the release
+     * predates the field. Optional so releases published before `apkSizeBytes`
+     * existed keep working.
+     */
+    val apkSizeBytes: Long = 0L
 ) {
     /** True when [sha256] is a well-formed 64-character hex digest. */
     fun hasValidSha256(): Boolean = SHA256_REGEX.matches(sha256)
@@ -46,6 +52,8 @@ data class ReleaseManifest(
                 val apkAsset = root.get("apkAsset").asStringOrNull()?.takeIf { it.isNotBlank() } ?: return null
                 val sha256 = root.get("sha256").asStringOrNull()?.trim()?.lowercase() ?: return null
                 val minSupported = root.get("minSupportedVersionCode").asLongOrNull() ?: 1L
+                // Optional: releases published before this field existed omit it.
+                val apkSize = root.get("apkSizeBytes").asLongOrNull()?.takeIf { it > 0 } ?: 0L
 
                 ReleaseManifest(
                     schemaVersion = schema,
@@ -55,7 +63,8 @@ data class ReleaseManifest(
                     packageName = packageName,
                     apkAsset = apkAsset,
                     sha256 = sha256,
-                    minSupportedVersionCode = minSupported
+                    minSupportedVersionCode = minSupported,
+                    apkSizeBytes = apkSize
                 )
             } catch (_: Exception) {
                 null

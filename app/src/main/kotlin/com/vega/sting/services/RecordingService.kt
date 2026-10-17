@@ -245,7 +245,7 @@ class RecordingService : LifecycleService() {
                         directory,
                         activeSession,
                         dualConfig,
-                        isPortraitForMode(orientationMode),
+                        orientationMode,
                         limit,
                         settings.splitRecordingEnabled,
                         videoListener
@@ -264,13 +264,6 @@ class RecordingService : LifecycleService() {
                 startStorageMonitor()
             }
         }
-    }
-
-    /** Resolves the composite orientation for the current device posture. */
-    private fun isPortraitForMode(orientationMode: String): Boolean = when (orientationMode) {
-        "PORTRAIT" -> true
-        "LANDSCAPE" -> false
-        else -> resources.configuration.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE
     }
 
     private fun handleStopAction() {

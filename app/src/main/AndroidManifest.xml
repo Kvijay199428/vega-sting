@@ -67,6 +67,13 @@
             android:exported="false"
             android:foregroundServiceType="microphone|camera" />
 
+        <!-- Background OTA check. Plain started service: no foreground type and
+             no notification; it stops itself once the check reports back. -->
+        <service
+            android:name=".services.UpdateCheckService"
+            android:enabled="true"
+            android:exported="false" />
+
         <service
             android:name=".services.RecordingTileService"
             android:icon="@drawable/ic_notification"

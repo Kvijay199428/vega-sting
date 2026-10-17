@@ -40,6 +40,7 @@ object UpdateChecker {
      * @param sha256 expected SHA-256 of the APK (lowercase hex)
      * @param notes release notes body
      * @param assetSizeBytes APK size reported by GitHub (0 when unknown)
+     * @param manifestSizeBytes APK size declared by the release manifest (0 when absent)
      */
     data class UpdateInfo(
         val channel: UpdateChannel,
@@ -50,8 +51,15 @@ object UpdateChecker {
         val sha256: String,
         val notes: String?,
         val publishedAt: String? = null,
-        val assetSizeBytes: Long = 0L
-    )
+        val assetSizeBytes: Long = 0L,
+        val manifestSizeBytes: Long = 0L
+    ) {
+        /**
+         * Best-known APK size for the storage preflight: the manifest value when
+         * present, otherwise the size GitHub reports for the asset.
+         */
+        val expectedSizeBytes: Long get() = if (manifestSizeBytes > 0L) manifestSizeBytes else assetSizeBytes
+    }
 
     /** Outcome of resolving a release for a channel. */
     sealed interface SelectionResult {
@@ -361,7 +369,8 @@ object UpdateChecker {
                     sha256 = manifest.sha256.lowercase(),
                     notes = release.body,
                     publishedAt = release.publishedAt,
-                    assetSizeBytes = apkAsset.size
+                    assetSizeBytes = apkAsset.size,
+                    manifestSizeBytes = manifest.apkSizeBytes
                 )
             }
         }

@@ -58,6 +58,7 @@ import com.vega.sting.ui.components.TerminalButton
 import com.vega.sting.ui.legal.WelcomeConsentScreen
 import com.vega.sting.ui.settings.SettingsScreen
 import com.vega.sting.ui.trash.TrashScreen
+import com.vega.sting.ui.update.DebugBuildBanner
 import com.vega.sting.ui.update.UpdateHost
 import com.vega.sting.ui.theme.*
 import com.vega.sting.ui.viewmodel.RecordingViewModel
@@ -131,8 +132,19 @@ private fun ConsentLoadingScreen() {
 
 @Composable
 private fun AcceptedAppContent(viewModel: RecordingViewModel = viewModel()) {
-    var currentScreen by remember { mutableStateOf("home") }
-    var selectedPlaybackRecording by remember { mutableStateOf<com.vega.sting.database.Recording?>(null) }
+    // Saved across configuration changes (rotation) so the current screen is not
+    // discarded back to home. The playlist selection is stored as an id and
+    // re-resolved from the database, since a Recording itself is not saveable.
+    var currentScreen by rememberSaveable { mutableStateOf("home") }
+    var selectedPlaybackId by rememberSaveable { mutableStateOf(-1) }
+
+    val recordings by viewModel.allRecordings.collectAsState(initial = emptyList())
+    val selectedPlaybackRecording = remember(recordings, selectedPlaybackId) {
+        if (selectedPlaybackId < 0) null else recordings.firstOrNull { it.id == selectedPlaybackId }
+    }
+    // The list is still loading, so a missing selection must not bounce the user
+    // home yet.
+    val playbackSelectionResolved = recordings.isNotEmpty() || selectedPlaybackId < 0
 
     
     
@@ -156,7 +168,7 @@ private fun AcceptedAppContent(viewModel: RecordingViewModel = viewModel()) {
             onNavigateToSettings = { currentScreen = "settings" },
             onNavigateToTrash = { currentScreen = "trash" },
             onOpenPlayback = { recording ->
-                selectedPlaybackRecording = recording
+                selectedPlaybackId = recording.id
                 currentScreen = "playback"
             }
         )
@@ -166,10 +178,14 @@ private fun AcceptedAppContent(viewModel: RecordingViewModel = viewModel()) {
         )
         "trash" -> TrashScreen(viewModel, onBack = { currentScreen = "home" })
         "playback" -> {
-            selectedPlaybackRecording?.let {
-                PlaybackScreen(recording = it, onBack = { currentScreen = "home" })
-            } ?: run {
-                currentScreen = "home"
+            val recording = selectedPlaybackRecording
+            when {
+                recording != null ->
+                    PlaybackScreen(recording = recording, onBack = { currentScreen = "home" })
+                // Selection is gone (file deleted) once the list has loaded.
+                playbackSelectionResolved -> currentScreen = "home"
+                // List not loaded yet: hold this frame rather than bounce home.
+                else -> Unit
             }
         }
     }
@@ -400,6 +416,9 @@ fun HomeScreen(
     ) {
         
         HeaderBar(recordingState)
+
+        // Remind the user whenever the *installed* build is a DEBUG prerelease.
+        DebugBuildBanner(onManageChannel = onNavigateToSettings)
 
         
         val modeText = when (recordingState) {

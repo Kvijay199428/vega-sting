@@ -15,8 +15,10 @@ import java.net.URL
  * work runs off the main thread; result/progress callbacks are delivered on the
  * main thread.
  *
- * Skipped versions are stored per channel, so a version skipped in DEBUG cannot
- * suppress a STABLE release with the same version name (and vice versa).
+ * Downloaded APKs are staged privately, verified, then promoted to the canonical
+ * public `Download/VEGA-STING/` folder by [ApkStore]. Skipped versions are stored
+ * per channel, so a version skipped in DEBUG cannot suppress a STABLE release
+ * with the same version name (and vice versa).
  */
 class UpdaterManager(private val context: Context) {
 
@@ -30,6 +32,9 @@ class UpdaterManager(private val context: Context) {
 
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
+
+        /** How often to re-check free space while streaming an APK. */
+        private const val FREE_SPACE_RECHECK_BYTES = 4L * 1024L * 1024L
 
         /** Re-check interval for the automatic startup prompt. */
         private const val AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L // 6 hours
@@ -62,6 +67,21 @@ class UpdaterManager(private val context: Context) {
 
         /** The release could not be fetched or resolved. */
         data class Failed(val reason: String) : CheckResult
+    }
+
+    /** Outcome of an APK download, always delivered on the main thread. */
+    sealed interface DownloadResult {
+        /** The user cancelled; any partial file was removed. */
+        data object Cancelled : DownloadResult
+
+        /** Verified and published to the public folder. */
+        data class Success(val artifact: ApkArtifact) : DownloadResult
+
+        /** Not enough free space to start or finish the download. */
+        data class InsufficientStorage(val requiredBytes: Long, val availableBytes: Long) : DownloadResult
+
+        /** The download or verification failed. */
+        data class Failed(val reason: String) : DownloadResult
     }
 
     /**
@@ -135,25 +155,43 @@ class UpdaterManager(private val context: Context) {
     }
 
     /**
-     * Downloads and verifies the APK for [update] into app-private storage.
+     * Downloads and verifies the APK for [update], then publishes it to the
+     * canonical public `Download/VEGA-STING/` folder.
+     *
      * [onProgress] is invoked on the main thread with (bytesDownloaded,
      * totalBytes); totalBytes is -1 when the server sends no Content-Length.
-     * The download is validated (SHA-256, package, version, signing certificate)
-     * before [onDone] receives the [File]; a candidate that cannot be installed
-     * is deleted and reported through [onError]. The download can be cancelled
-     * by the caller (e.g. dialog dismiss) via the returned cancellation state.
+     * The download is validated (size, SHA-256, package, version, signer) before
+     * it is promoted; an invalid candidate is deleted and reported through
+     * [onResult]. A storage preflight runs before the transfer and is re-checked
+     * as data arrives, so an oversized download cannot fill the volume.
+     *
+     * @param allowDowngrade permit a target whose version code is lower than the
+     *   installed build (manual channel-downgrade only); the APK is still
+     *   verified for package, signature, checksum and size.
+     * @return a handle whose [DownloadJob.cancel] aborts the transfer
      */
     fun download(
         update: UpdateChecker.UpdateInfo,
+        allowDowngrade: Boolean = false,
         onProgress: (downloaded: Long, total: Long) -> Unit,
-        onDone: (File) -> Unit,
-        onError: (String) -> Unit
+        onResult: (DownloadResult) -> Unit
     ): DownloadJob {
         val job = DownloadJob()
         Thread {
             var connection: HttpURLConnection? = null
+            var staging: File? = null
             try {
-                if (job.cancelled) return@Thread
+                // ---- storage preflight -------------------------------------
+                val expected = update.expectedSizeBytes
+                val volume = android.os.Environment.getExternalStorageDirectory()
+                val available = StoragePreflight.availableBytes(volume)
+                if (available >= 0L && !StoragePreflight.hasRoom(available, expected)) {
+                    val required = StoragePreflight.requiredBytes(expected)
+                    mainHandler.post { onResult(DownloadResult.InsufficientStorage(required, available)) }
+                    return@Thread
+                }
+
+                if (job.cancelled) { mainHandler.post { onResult(DownloadResult.Cancelled) }; return@Thread }
 
                 connection = (URL(update.apkUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
@@ -167,30 +205,50 @@ class UpdaterManager(private val context: Context) {
 
                 val code = connection.responseCode
                 if (code != HttpURLConnection.HTTP_OK) {
-                    mainHandler.post { onError("Server returned HTTP $code") }
+                    mainHandler.post { onResult(DownloadResult.Failed("Server returned HTTP $code")) }
                     return@Thread
                 }
 
                 val contentLength = connection.contentLengthLong
-                val dir = File(context.filesDir, "updates").apply { mkdirs() }
-                val target = File(dir, safeAssetName(update.assetName))
+                val target = ApkStore.stagingFile(context, update.assetName)
+                staging = target
+                if (target.exists()) target.delete()
 
                 connection.inputStream.use { input ->
                     target.outputStream().use { output ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                         var downloaded = 0L
                         var lastReport = 0L
+                        var lastSpaceCheck = 0L
 
                         while (true) {
                             if (job.cancelled) {
                                 output.flush()
                                 target.delete()
+                                mainHandler.post { onResult(DownloadResult.Cancelled) }
                                 return@Thread
                             }
                             val read = input.read(buffer)
                             if (read == -1) break
                             output.write(buffer, 0, read)
                             downloaded += read
+
+                            // Re-check free space periodically so a stream that
+                            // outgrows the preflight estimate cannot fill the
+                            // volume before failing.
+                            if (downloaded - lastSpaceCheck >= FREE_SPACE_RECHECK_BYTES) {
+                                lastSpaceCheck = downloaded
+                                val free = StoragePreflight.availableBytes(volume)
+                                if (free >= 0L && free < StoragePreflight.MIN_MARGIN_BYTES) {
+                                    output.flush()
+                                    target.delete()
+                                    val required = StoragePreflight.requiredBytes(expected)
+                                    mainHandler.post {
+                                        onResult(DownloadResult.InsufficientStorage(required, free))
+                                    }
+                                    return@Thread
+                                }
+                            }
 
                             // Throttle UI updates to ~every 150ms to avoid chattiness.
                             if (downloaded - lastReport >= 150_000 || downloaded == contentLength) {
@@ -203,32 +261,51 @@ class UpdaterManager(private val context: Context) {
 
                 if (job.cancelled) {
                     target.delete()
+                    mainHandler.post { onResult(DownloadResult.Cancelled) }
                     return@Thread
                 }
 
-                // Never offer an APK that Android would reject.
+                // Never publish an APK that Android would reject (or that does
+                // not match its release manifest).
                 val validation = ApkValidator.validateDownloadedApk(
                     context = context,
                     file = target,
                     expectedPackage = context.packageName,
                     expectedVersionCode = update.versionCode,
                     expectedVersionName = update.versionName,
-                    expectedSha256 = update.sha256
+                    expectedSha256 = update.sha256,
+                    expectedSizeBytes = update.expectedSizeBytes,
+                    allowDowngrade = allowDowngrade
                 )
                 if (validation is ApkValidator.Result.Invalid) {
                     Log.w(TAG, "Downloaded APK rejected: ${validation.reason}")
                     target.delete()
-                    mainHandler.post { onError(validation.reason) }
+                    mainHandler.post { onResult(DownloadResult.Failed(validation.reason)) }
                     return@Thread
                 }
 
-                Log.i(TAG, "APK downloaded and verified: ${target.absolutePath} (${target.length()} bytes)")
-                mainHandler.post { onDone(target) }
+                // Promote the verified file into the public folder.
+                val artifact = ApkStore.publish(context, target, update.assetName)
+                if (artifact == null) {
+                    mainHandler.post {
+                        onResult(DownloadResult.Failed("Could not save the APK to the Downloads folder."))
+                    }
+                    return@Thread
+                }
+
+                Log.i(TAG, "APK verified and published: ${artifact.reference} (${artifact.sizeBytes} bytes)")
+                mainHandler.post { onResult(DownloadResult.Success(artifact)) }
             } catch (e: Exception) {
                 Log.e(TAG, "Download failed", e)
-                if (!job.cancelled) {
-                    mainHandler.post { onError(e.message ?: "Download failed") }
+                staging?.delete()
+                // Always report an outcome so the caller never holds a job that
+                // will never complete.
+                val outcome = if (job.cancelled) {
+                    DownloadResult.Cancelled
+                } else {
+                    DownloadResult.Failed(e.message ?: "Download failed")
                 }
+                mainHandler.post { onResult(outcome) }
             } finally {
                 connection?.disconnect()
             }
@@ -271,22 +348,20 @@ class UpdaterManager(private val context: Context) {
         prefs.edit().remove(KEY_PENDING_INSTALL_VERSION).apply()
     }
 
-    private fun safeAssetName(name: String): String {
-        val sanitized = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        return if (sanitized.isEmpty()) "vega-sting.apk" else sanitized
-    }
-
     /**
-     * Removes stale APKs left in filesDir/updates from previous attempts, keeping
-     * only [keep]. Prevents unbounded disk growth from repeated update attempts.
+     * Reconciles the public `Download/VEGA-STING/` folder with the running
+     * build, deleting only managed APKs that are strictly older than the
+     * installed version (an installed update no longer needs its installer).
+     *
+     * Safe to call on every launch: it never touches files that do not carry the
+     * managed `vega-sting-` prefix, and never deletes an artifact passed as
+     * [keep] (an APK the user may still choose to install).
      */
-    fun purgeStaleDownloads(keep: File? = null) {
-        val dir = File(context.filesDir, "updates")
-        dir.listFiles()?.forEach { file ->
-            if (keep == null || file.absolutePath != keep.absolutePath) {
-                if (file.delete()) Log.i(TAG, "Purged stale update file ${file.name}")
-            }
-        }
+    fun reconcileDownloads(keep: ApkArtifact? = null) {
+        runCatching {
+            ApkStore.purgeStaging(context)
+            ApkStore.cleanupObsolete(context, keep = keep)
+        }.onFailure { Log.w(TAG, "Download reconciliation failed", it) }
     }
 
     /** Mutable cancellation flag shared with the download thread. */

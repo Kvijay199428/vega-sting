@@ -108,10 +108,18 @@ object ApkValidator {
         expectedPackage: String,
         expectedVersionCode: Long,
         expectedVersionName: String?,
-        expectedSha256: String?
+        expectedSha256: String?,
+        expectedSizeBytes: Long = 0L,
+        allowDowngrade: Boolean = false
     ): Result {
         if (!file.exists() || file.length() == 0L) {
             return Result.Invalid("The downloaded file is empty.")
+        }
+        if (expectedSizeBytes > 0L && file.length() != expectedSizeBytes) {
+            return Result.Invalid(
+                "The downloaded APK is ${file.length()} bytes, but the release declares " +
+                    "$expectedSizeBytes bytes."
+            )
         }
         if (!verifyChecksum(file, expectedSha256)) {
             return Result.Invalid("The downloaded APK failed its SHA-256 integrity check.")
@@ -135,7 +143,7 @@ object ApkValidator {
                 "The APK version name ${facts.versionName} does not match the release manifest."
             )
         }
-        if (facts.versionCode <= BuildConfig.VERSION_CODE) {
+        if (!allowDowngrade && facts.versionCode <= BuildConfig.VERSION_CODE) {
             return Result.Invalid(
                 "The APK version code ${facts.versionCode} is not newer than the installed " +
                     "build (${BuildConfig.VERSION_CODE}); Android rejects downgrades."

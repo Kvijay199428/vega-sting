@@ -43,6 +43,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 @Composable
 fun DualCameraPreviewDialog(
     config: DualCameraConfig,
+    orientationMode: String,
     portraitOutput: Boolean,
     onDismiss: () -> Unit
 ) {
@@ -109,7 +110,7 @@ fun DualCameraPreviewDialog(
                                             surfaceReady = true
                                             val w = holder.surfaceFrame.width().takeIf { it > 0 } ?: 720
                                             val h = holder.surfaceFrame.height().takeIf { it > 0 } ?: 1280
-                                            controller.startPreview(config, holder.surface, w, h, listener)
+                                            controller.startPreview(config, orientationMode, holder.surface, w, h, listener)
                                         }
 
                                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {

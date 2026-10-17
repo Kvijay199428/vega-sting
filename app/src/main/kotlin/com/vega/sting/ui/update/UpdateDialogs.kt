@@ -35,6 +35,7 @@ import com.vega.sting.ui.theme.Panel
 import com.vega.sting.ui.theme.Success
 import com.vega.sting.ui.theme.TextPrimary
 import com.vega.sting.ui.theme.TextSecondary
+import com.vega.sting.updater.ApkArtifact
 import com.vega.sting.updater.UpdateChannel
 import com.vega.sting.updater.UpdateChecker
 
@@ -198,9 +199,39 @@ fun UpdateCheckFailedDialog(onDismiss: () -> Unit) {
     )
 }
 
+/** Shown while an update check is in flight. */
+@Composable
+fun CheckingDialog() {
+    AlertDialog(
+        onDismissRequest = { },
+        containerColor = Panel,
+        titleContentColor = AccentOrange,
+        textContentColor = TextPrimary,
+        shape = RoundedCornerShape(4.dp),
+        title = {
+            Text(
+                text = "Checking for updates",
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        text = {
+            Text(
+                text = "Contacting GitHub…",
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        confirmButton = {}
+    )
+}
+
 /** Shown when the APK download fails; carries the underlying reason. */
 @Composable
-fun UpdateDownloadFailedDialog(reason: String, onDismiss: () -> Unit) {
+fun UpdateDownloadFailedDialog(
+    reason: String,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Panel,
@@ -221,7 +252,273 @@ fun UpdateDownloadFailedDialog(reason: String, onDismiss: () -> Unit) {
             )
         },
         confirmButton = {
-            TerminalTextButton(text = stringResource(R.string.update_close), onClick = onDismiss)
+            TerminalTextButton(text = stringResource(R.string.update_try_again), onClick = onRetry)
+        },
+        dismissButton = {
+            TerminalTextButton(
+                text = stringResource(R.string.update_close),
+                onClick = onDismiss,
+                contentColor = TextSecondary
+            )
+        }
+    )
+}
+
+/**
+ * Shown when there is not enough free space to download the release. Offers a
+ * retry (which re-checks free space for the same release) and a fresh update
+ * check; both keep the currently selected channel and target release.
+ */
+@Composable
+fun UpdateInsufficientStorageDialog(
+    requiredBytes: Long,
+    availableBytes: Long,
+    onRetry: () -> Unit,
+    onCheckForUpdates: () -> Unit,
+    onCancel: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = Panel,
+        titleContentColor = AccentOrange,
+        textContentColor = TextPrimary,
+        shape = RoundedCornerShape(4.dp),
+        title = {
+            Text(
+                text = stringResource(R.string.update_insufficient_storage_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(R.string.update_insufficient_storage_body),
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Required: ${formatBytes(requiredBytes)}\n" +
+                        "Available: ${formatBytes(availableBytes)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        },
+        confirmButton = {
+            TerminalTextButton(text = stringResource(R.string.update_try_download_again), onClick = onRetry)
+        },
+        dismissButton = {
+            Row {
+                TerminalTextButton(
+                    text = stringResource(R.string.update_check_for_updates),
+                    onClick = onCheckForUpdates
+                )
+                Spacer(Modifier.width(8.dp))
+                TerminalTextButton(
+                    text = stringResource(R.string.update_close),
+                    onClick = onCancel,
+                    contentColor = TextSecondary
+                )
+            }
+        }
+    )
+}
+
+/**
+ * Shown when the selected channel's newest valid release is OLDER than the
+ * installed build. Android will not replace a newer app with an older one, so
+ * this explains the manual uninstall/reinstall path instead of offering an
+ * ordinary in-place update.
+ */
+@Composable
+fun ManualDowngradeDialog(
+    update: UpdateChecker.UpdateInfo,
+    installedChannel: UpdateChannel,
+    installedVersionName: String,
+    installedVersionCode: Long,
+    onDownload: () -> Unit,
+    onWait: () -> Unit,
+    onCancel: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = Panel,
+        titleContentColor = AccentOrange,
+        textContentColor = TextPrimary,
+        shape = RoundedCornerShape(4.dp),
+        title = {
+            Column {
+                Text(
+                    text = stringResource(R.string.update_channel_switch_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "${update.channel.label} ${update.versionName}  (build ${update.versionCode})",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AccentOrange,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = "Currently installed: ${installedChannel.label} $installedVersionName " +
+                        "(build $installedVersionCode)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.update_downgrade_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.update_downgrade_data_warning),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AccentOrange,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        },
+        confirmButton = {
+            TerminalTextButton(text = stringResource(R.string.update_download_manual), onClick = onDownload)
+        },
+        dismissButton = {
+            Row {
+                TerminalTextButton(
+                    text = stringResource(R.string.update_wait_for_newer),
+                    onClick = onWait,
+                    contentColor = TextSecondary
+                )
+                Spacer(Modifier.width(8.dp))
+                TerminalTextButton(
+                    text = stringResource(R.string.update_close),
+                    onClick = onCancel,
+                    contentColor = TextSecondary
+                )
+            }
+        }
+    )
+}
+
+/**
+ * Shown after an older (manual-downgrade) APK has been downloaded and verified.
+ * Explains that the user must uninstall the current app first, then install the
+ * saved APK from the public download folder.
+ */
+@Composable
+fun ManualDowngradeReadyDialog(
+    update: UpdateChecker.UpdateInfo,
+    artifact: ApkArtifact,
+    onDone: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDone,
+        containerColor = Panel,
+        titleContentColor = AccentOrange,
+        textContentColor = TextPrimary,
+        shape = RoundedCornerShape(4.dp),
+        title = {
+            Text(
+                text = stringResource(R.string.update_manual_install_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = "${update.channel.label} ${update.versionName} (build ${update.versionCode}) " +
+                        "was saved.",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.update_manual_install_steps, ApkStoreFolderLabel),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Saved as: ${artifact.displayName}\nFolder: $ApkStoreFolderLabel",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        },
+        confirmButton = {
+            TerminalTextButton(text = stringResource(R.string.update_close), onClick = onDone)
+        }
+    )
+}
+
+/** Human-visible public download folder, e.g. "Download/VEGA-STING/". */
+private const val ApkStoreFolderLabel = "Download/VEGA-STING/"
+
+/**
+ * Shown once the download completes, before handing off to the system installer.
+ */
+@Composable
+fun UpdateReadyToInstallDialog(
+    update: UpdateChecker.UpdateInfo,
+    onInstall: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Panel,
+        titleContentColor = AccentOrange,
+        textContentColor = TextPrimary,
+        shape = RoundedCornerShape(4.dp),
+        title = {
+            Column {
+                Text(
+                    text = stringResource(R.string.update_install_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "${update.channel.label} ${update.versionName}  (build ${update.versionCode})",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Success,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        },
+        text = {
+            Text(
+                text = stringResource(R.string.update_install_body),
+                fontFamily = FontFamily.Monospace
+            )
+        },
+        confirmButton = {
+            TerminalTextButton(text = stringResource(R.string.update_install_now), onClick = onInstall)
+        },
+        dismissButton = {
+            TerminalTextButton(
+                text = stringResource(R.string.update_later),
+                onClick = onDismiss,
+                contentColor = TextSecondary
+            )
         }
     )
 }
@@ -404,44 +701,6 @@ fun UpdateDownloadProgressDialog(
             TerminalTextButton(
                 text = "Cancel",
                 onClick = onCancel,
-                contentColor = TextSecondary
-            )
-        }
-    )
-}
-
-/** Shown once the download completes, before handing off to the system installer. */
-@Composable
-fun UpdateReadyToInstallDialog(
-    onInstall: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Panel,
-        titleContentColor = AccentOrange,
-        textContentColor = TextPrimary,
-        shape = RoundedCornerShape(4.dp),
-        title = {
-            Text(
-                text = stringResource(R.string.update_install_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontFamily = FontFamily.Monospace
-            )
-        },
-        text = {
-            Text(
-                text = stringResource(R.string.update_install_body),
-                fontFamily = FontFamily.Monospace
-            )
-        },
-        confirmButton = {
-            TerminalTextButton(text = stringResource(R.string.update_install_now), onClick = onInstall)
-        },
-        dismissButton = {
-            TerminalTextButton(
-                text = stringResource(R.string.update_later),
-                onClick = onDismiss,
                 contentColor = TextSecondary
             )
         }

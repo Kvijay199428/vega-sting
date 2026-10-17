@@ -42,7 +42,48 @@ object InstallController {
         }
 
     /**
-     * Starts the install flow for [apk]. Must be called from an Activity.
+     * Starts the install flow for a verified [ApkArtifact]. Handles both a plain
+     * file (API 26–28, shared through the FileProvider) and a MediaStore
+     * `content://` URI (API 29+).
+     */
+    fun startInstall(activity: Activity, artifact: ApkArtifact) {
+        try {
+            if (!canInstallApks(activity)) {
+                openUnknownSourcesSettings(activity)
+                return
+            }
+
+            val apkUri: Uri = artifact.uri ?: FileProvider.getUriForFile(
+                activity,
+                authority(activity),
+                artifact.file ?: return
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            activity.startActivity(intent)
+            Log.i(TAG, "Launched Package Installer for ${artifact.displayName}")
+        } catch (e: ActivityNotFoundException) {
+            Log.e(TAG, "No activity to handle APK install", e)
+            openUnknownSourcesSettings(activity)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Blocked from installing APK", e)
+            openUnknownSourcesSettings(activity)
+        } catch (e: IllegalArgumentException) {
+            // Thrown by FileProvider when the file is not covered by file_paths.xml.
+            Log.e(TAG, "APK path not covered by FileProvider config", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start install", e)
+        }
+    }
+
+    /**
+     * Starts the install flow for [apk] (legacy File entry point). Must be called
+     * from an Activity.
      *
      * If the app is not yet allowed to install apps, opens the system
      * "Install unknown apps" settings screen and tells the caller it was unable to

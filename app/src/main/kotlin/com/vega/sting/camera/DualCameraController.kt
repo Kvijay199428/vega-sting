@@ -12,6 +12,9 @@ import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
 import android.view.Surface
+import com.vega.sting.orientation.OrientationManager
+import com.vega.sting.overlay.OverlayLayer
+import com.vega.sting.overlay.OverlaySettingsLoader
 
 /**
  * Owns the two live Camera2 devices used for the dual-camera preview.
@@ -36,6 +39,7 @@ class DualCameraController(private val context: Context) {
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
     private var compositor: DualCameraCompositor? = null
+    private var overlayLayer: OverlayLayer? = null
     private var frontDevice: CameraDevice? = null
     private var backDevice: CameraDevice? = null
     private var frontSession: CameraCaptureSession? = null
@@ -45,8 +49,13 @@ class DualCameraController(private val context: Context) {
     private var listener: Listener? = null
     private var capability: DualCameraCapabilityResult? = null
     private var config: DualCameraConfig = DualCameraConfig.DEFAULTS
+    private var orientationMode: String = "FOLLOW_SENSOR"
     private var portraitOutput = true
+    private var frontRotationDegrees = 0
+    private var backRotationDegrees = 0
     private var running = false
+
+    private val orientationManager = OrientationManager(context)
 
     val capabilityResult: DualCameraCapabilityResult? get() = capability
 
@@ -54,6 +63,7 @@ class DualCameraController(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun startPreview(
         config: DualCameraConfig,
+        orientationMode: String,
         previewSurface: Surface,
         viewWidth: Int,
         viewHeight: Int,
@@ -61,6 +71,7 @@ class DualCameraController(private val context: Context) {
     ) {
         if (running) return
         this.config = config
+        this.orientationMode = orientationMode
         this.listener = listener
         this.portraitOutput = DualCameraGeometry.isPortraitOutput(viewWidth, viewHeight)
         running = true
@@ -79,6 +90,26 @@ class DualCameraController(private val context: Context) {
                 stopInternal()
                 return@post
             }
+            // Resolve the session orientation the same way the recorder does so
+            // the preview shows exactly what will be written to the file.
+            orientationManager.start()
+            val session = try {
+                DualCameraOrientation.resolve(
+                    context = context,
+                    orientationMode = orientationMode,
+                    frontCameraId = result.frontCameraId,
+                    backCameraId = result.backCameraId,
+                    orientationManager = orientationManager
+                )
+            } catch (e: Exception) {
+                publish(State.ERROR, "Could not resolve the preview orientation: ${e.message}")
+                stopInternal()
+                return@post
+            }
+            portraitOutput = session.portraitOutput
+            frontRotationDegrees = session.frontRotationDegrees
+            backRotationDegrees = session.backRotationDegrees
+
             val compositor = DualCameraCompositor(h)
             this.compositor = compositor
             if (!compositor.initialize(previewSurface, viewWidth, viewHeight)) {
@@ -86,26 +117,56 @@ class DualCameraController(private val context: Context) {
                 stopInternal()
                 return@post
             }
-            compositor.setConfig(config, portraitOutput)
+            applyCompositorConfig(compositor)
+            attachOverlay(compositor, viewWidth, viewHeight)
             publish(State.STARTING, null)
             openCameras(result)
         }
     }
 
+    private fun applyCompositorConfig(compositor: DualCameraCompositor) {
+        compositor.setConfig(config, portraitOutput)
+        compositor.setFeedRotation(frontRotationDegrees, backRotationDegrees)
+    }
+
+    /**
+     * Builds and attaches the watermark overlay so the live preview is
+     * WYSIWYG: it shows exactly the timestamp/signature the recorder will bake
+     * in. Must run on the render thread with the compositor's GL context
+     * current. The composite is already upright, hence rotation hint 0.
+     */
+    private fun attachOverlay(compositor: DualCameraCompositor, width: Int, height: Int) {
+        overlayLayer?.release()
+        val layer = OverlayLayer(
+            width = width.coerceAtLeast(1),
+            height = height.coerceAtLeast(1),
+            settings = OverlaySettingsLoader.load(context),
+            scaledDensity = context.resources.displayMetrics.density *
+                context.resources.configuration.fontScale,
+            rotationHint = 0
+        )
+        overlayLayer = layer
+        compositor.setOverlayLayer(layer)
+    }
+
     fun updateConfig(newConfig: DualCameraConfig) {
         config = newConfig
         handler?.post {
-            compositor?.setConfig(newConfig, portraitOutput)
-            compositor?.renderFrame()
+            compositor?.let {
+                applyCompositorConfig(it)
+                it.renderFrame()
+            }
         }
     }
 
     fun updatePreviewSurface(surface: Surface, width: Int, height: Int) {
-        portraitOutput = DualCameraGeometry.isPortraitOutput(width, height)
         handler?.post {
             val c = compositor ?: return@post
             c.bindOutput(surface, width, height)
-            c.setConfig(config, portraitOutput)
+            applyCompositorConfig(c)
+            // The overlay is authored for the exact surface size, so it must be
+            // rebuilt whenever the preview surface is re-sized.
+            attachOverlay(c, width, height)
             c.renderFrame()
         }
     }
@@ -275,8 +336,16 @@ class DualCameraController(private val context: Context) {
         frontInputSurface = null
         backInputSurface = null
 
+        overlayLayer?.release()
+        overlayLayer = null
+
         compositor?.release()
         compositor = null
+
+        try {
+            orientationManager.stop()
+        } catch (_: Exception) {
+        }
 
         running = false
         handler = null

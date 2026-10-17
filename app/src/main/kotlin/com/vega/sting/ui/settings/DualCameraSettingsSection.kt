@@ -1,11 +1,8 @@
 package com.vega.sting.ui.settings
 
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,7 +17,6 @@ import com.vega.sting.camera.DualCameraLayout
 import com.vega.sting.camera.DualCameraQuality
 import com.vega.sting.camera.DualCameraScalingMode
 import com.vega.sting.camera.DualCameraSplitRatio
-import com.vega.sting.ui.theme.AccentOrange
 import com.vega.sting.ui.theme.TextSecondary
 
 private enum class DualDialog { LAYOUT, RATIO, QUALITY, FPS, SCALING }
@@ -138,41 +134,41 @@ fun DualCameraSettingsSection(
     }
 
     when (dialog) {
-        DualDialog.LAYOUT -> OptionDialog(
+        DualDialog.LAYOUT -> SelectionDialog(
             title = "LAYOUT",
-            options = DualCameraLayout.entries.map { it to it.label },
+            options = DualCameraLayout.entries.map { SelectionOption(it, it.label) },
             selected = config.layout,
             onDismiss = { dialog = null },
             onSelect = { onConfigChange(config.copy(layout = it)); dialog = null }
         )
 
-        DualDialog.RATIO -> OptionDialog(
+        DualDialog.RATIO -> SelectionDialog(
             title = "SPLIT RATIO",
-            options = DualCameraSplitRatio.entries.map { it to it.label },
+            options = DualCameraSplitRatio.entries.map { SelectionOption(it, it.label) },
             selected = config.splitRatio,
             onDismiss = { dialog = null },
             onSelect = { onConfigChange(config.copy(splitRatio = it)); dialog = null }
         )
 
-        DualDialog.QUALITY -> OptionDialog(
+        DualDialog.QUALITY -> SelectionDialog(
             title = "QUALITY",
-            options = qualityOptions.map { it to it.label },
+            options = qualityOptions.map { SelectionOption(it, it.label) },
             selected = config.quality,
             onDismiss = { dialog = null },
             onSelect = { onConfigChange(config.copy(quality = it)); dialog = null }
         )
 
-        DualDialog.FPS -> OptionDialog(
+        DualDialog.FPS -> SelectionDialog(
             title = "FPS",
-            options = fpsOptions.map { it to it.toString() },
+            options = fpsOptions.map { SelectionOption(it, it.toString()) },
             selected = config.fps,
             onDismiss = { dialog = null },
             onSelect = { onConfigChange(config.copy(fps = it)); dialog = null }
         )
 
-        DualDialog.SCALING -> OptionDialog(
+        DualDialog.SCALING -> SelectionDialog(
             title = "SCALING",
-            options = DualCameraScalingMode.entries.map { it to it.label },
+            options = DualCameraScalingMode.entries.map { SelectionOption(it, it.label) },
             selected = config.scalingMode,
             onDismiss = { dialog = null },
             onSelect = { onConfigChange(config.copy(scalingMode = it)); dialog = null }
@@ -180,33 +176,4 @@ fun DualCameraSettingsSection(
 
         null -> Unit
     }
-}
-
-@Composable
-private fun <T> OptionDialog(
-    title: String,
-    options: List<Pair<T, String>>,
-    selected: T,
-    onDismiss: () -> Unit,
-    onSelect: (T) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title, color = MaterialTheme.colorScheme.primary) },
-        text = {
-            Column {
-                options.forEach { (value, label) ->
-                    SettingsItem(
-                        label = label,
-                        value = if (value == selected) "SET" else "",
-                        onClick = { onSelect(value) }
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("CLOSE", color = AccentOrange) }
-        },
-        containerColor = MaterialTheme.colorScheme.surface
-    )
 }

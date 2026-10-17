@@ -85,7 +85,7 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     var pendingChannel by remember { mutableStateOf<UpdateChannel?>(null) }
     
     var availableStorages by remember { mutableStateOf(StorageManager.getAvailableStorages(context)) }
-    var showStoragePicker by remember { mutableStateOf(false) }
+    var activeDialog by remember { mutableStateOf<SettingsDialog?>(null) }
     var showSignatureEditor by remember { mutableStateOf(false) }
     var showDualCameraPreview by remember { mutableStateOf(false) }
     var signatureDraft by remember { mutableStateOf(signature) }
@@ -139,6 +139,16 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     val recordingState by RecordingStateManager.state.collectAsState()
     val isRecording = RecordingStateManager.isBusy(recordingState)
 
+    // Master-toggle gating: an ENABLE/DISABLE switch disables its dependent
+    // rows exactly the way DUAL CAMERA MODE disables the dual-camera details.
+    // WATERMARK is the true master of the overlay group (see
+    // OverlaySettingsComposer), so it gates every other overlay row.
+    val overlayEnabled = watermarkEnabled
+    val timestampDetailEnabled = overlayEnabled && timestampEnabled
+    val signaturePresent = signature.isNotBlank()
+    val signatureDetailEnabled = overlayEnabled && signaturePresent
+    val textSizeEnabled = overlayEnabled && (timestampEnabled || signaturePresent)
+
     if (showSignatureEditor) {
         AlertDialog(
             onDismissRequest = { showSignatureEditor = false },
@@ -178,45 +188,6 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         )
     }
 
-    if (showStoragePicker) {
-        AlertDialog(
-            onDismissRequest = { showStoragePicker = false },
-            title = { Text("STORAGE LOCATION", color = AccentYellow) },
-            text = {
-                Column {
-                    availableStorages.forEach { (type, dir) ->
-                        val name = type.name
-                        val free = StorageHealthManager.formatBytes(
-                            StorageHealthManager.getFreeSpaceBytes(dir)
-                        )
-                        SettingsItem(
-                            label = name,
-                            value = if (name == storageLocation) "$free  *" else free,
-                            onClick = {
-                                scope.launch { settingsManager.updateStorageLocation(name) }
-                                showStoragePicker = false
-                            }
-                        )
-                    }
-                    if (availableStorages.size == 1) {
-                        Text(
-                            "No removable storage detected.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showStoragePicker = false }) {
-                    Text("CLOSE", color = TextSecondary)
-                }
-            },
-            containerColor = Panel,
-            shape = MaterialTheme.shapes.extraSmall
-        )
-    }
-
     if (showDualCameraPreview) {
         val configuration = LocalConfiguration.current
         val portraitOutput = when (orientationMode) {
@@ -246,41 +217,25 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             SettingsItem(
                 label = "VIDEO CODEC", 
                 value = videoCodec,
-                onClick = {
-                    val next = if (videoCodec == "H.264") "H.265" else "H.264"
-                    scope.launch { settingsManager.updateVideoCodec(next) }
-                }
+                onClick = { activeDialog = SettingsDialog.VIDEO_CODEC }
             )
             SettingsItem(
                 label = "VIDEO SIZE",
                 value = videoSize,
-                onClick = {
-                    val next = cycleOption(VIDEO_SIZE_OPTIONS, videoSize)
-                    scope.launch { settingsManager.updateResolution(next) }
-                }
+                onClick = { activeDialog = SettingsDialog.VIDEO_SIZE }
             )
             SettingsItem(
                 label = "VIDEO RATIO",
                 value = videoRatio,
-                onClick = {
-                    val next = cycleOption(VIDEO_RATIO_OPTIONS, videoRatio)
-                    scope.launch { settingsManager.updateVideoRatio(next) }
-                }
+                onClick = { activeDialog = SettingsDialog.VIDEO_RATIO }
             )
             
             
             
             SettingsItem(
                 label = "ORIENTATION", 
-                value = orientationMode,
-                onClick = {
-                    val next = when(orientationMode) {
-                        "PORTRAIT" -> "LANDSCAPE"
-                        "LANDSCAPE" -> "FOLLOW_SENSOR"
-                        else -> "PORTRAIT"
-                    }
-                    scope.launch { settingsManager.updateOrientationMode(next) }
-                }
+                value = orientationLabel(orientationMode),
+                onClick = { activeDialog = SettingsDialog.ORIENTATION }
             )
         }
 
@@ -295,26 +250,21 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             SettingsItem(
                 label = "VIDEO FILE LIMIT",
                 value = StorageHealthManager.formatFileSize(videoLimit),
-                onClick = {
-                    val next = cycleBytes(VIDEO_SEGMENT_OPTIONS, videoLimit)
-                    scope.launch { settingsManager.updateVideoSegmentLimitBytes(next) }
-                }
+                onClick = if (splitEnabled) {
+                    { activeDialog = SettingsDialog.VIDEO_LIMIT }
+                } else null
             )
             SettingsItem(
                 label = "AUDIO FILE LIMIT",
                 value = StorageHealthManager.formatFileSize(audioLimit),
-                onClick = {
-                    val next = cycleBytes(AUDIO_SEGMENT_OPTIONS, audioLimit)
-                    scope.launch { settingsManager.updateAudioSegmentLimitBytes(next) }
-                }
+                onClick = if (splitEnabled) {
+                    { activeDialog = SettingsDialog.AUDIO_LIMIT }
+                } else null
             )
             SettingsItem(
                 label = "FREE-SPACE RESERVE",
                 value = StorageHealthManager.formatFileSize(reserveBytes),
-                onClick = {
-                    val next = cycleBytes(RESERVE_OPTIONS, reserveBytes)
-                    scope.launch { settingsManager.updateMinimumFreeSpaceBytes(next) }
-                }
+                onClick = { activeDialog = SettingsDialog.RESERVE }
             )
             SettingsItem(
                 label = "AUDIO FALLBACK",
@@ -336,39 +286,6 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
 
         SettingsSection(title = "OVERLAY") {
             SettingsItem(
-                label = "TIMESTAMP",
-                value = if (timestampEnabled) "ENABLED" else "DISABLED",
-                onClick = {
-                    scope.launch { settingsManager.updateTimestampEnabled(!timestampEnabled) }
-                }
-            )
-            SettingsItem(
-                label = "TIMESTAMP POSITION",
-                value = OverlayPosition.from(timestampPosition).displayName(),
-                onClick = {
-                    scope.launch {
-                        settingsManager.updateTimestampPosition(nextOverlayPosition(timestampPosition))
-                    }
-                }
-            )
-            SettingsItem(
-                label = "TIMESTAMP FORMAT",
-                value = timestampFormat,
-                onClick = {
-                    val next = if (timestampFormat == "yyyy-MM-dd HH:mm:ss") {
-                        "yyyy/MM/dd HH:mm:ss"
-                    } else {
-                        "yyyy-MM-dd HH:mm:ss"
-                    }
-                    scope.launch { settingsManager.updateTimestampFormat(next) }
-                }
-            )
-            SettingsItem(
-                label = "SIGNATURE",
-                value = if (signature.isBlank()) "OFF" else signature,
-                onClick = { showSignatureEditor = true }
-            )
-            SettingsItem(
                 label = "WATERMARK",
                 value = if (watermarkEnabled) "ENABLED" else "DISABLED",
                 onClick = {
@@ -376,21 +293,42 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
                 }
             )
             SettingsItem(
+                label = "TIMESTAMP",
+                value = if (timestampEnabled) "ENABLED" else "DISABLED",
+                onClick = if (overlayEnabled) {
+                    { scope.launch { settingsManager.updateTimestampEnabled(!timestampEnabled) } }
+                } else null
+            )
+            SettingsItem(
+                label = "TIMESTAMP POSITION",
+                value = OverlayPosition.from(timestampPosition).displayName(),
+                onClick = if (timestampDetailEnabled) {
+                    { activeDialog = SettingsDialog.TIMESTAMP_POSITION }
+                } else null
+            )
+            SettingsItem(
+                label = "TIMESTAMP FORMAT",
+                value = timestampFormat,
+                onClick = if (timestampDetailEnabled) {
+                    { activeDialog = SettingsDialog.TIMESTAMP_FORMAT }
+                } else null
+            )
+            SettingsItem(
+                label = "SIGNATURE",
+                value = if (signature.isBlank()) "OFF" else signature,
+                onClick = if (overlayEnabled) { { showSignatureEditor = true } } else null
+            )
+            SettingsItem(
                 label = "SIGNATURE POSITION",
                 value = OverlayPosition.from(signaturePosition).displayName(),
-                onClick = {
-                    scope.launch {
-                        settingsManager.updateSignaturePosition(nextOverlayPosition(signaturePosition))
-                    }
-                }
+                onClick = if (signatureDetailEnabled) {
+                    { activeDialog = SettingsDialog.SIGNATURE_POSITION }
+                } else null
             )
             SettingsItem(
                 label = "TEXT SIZE",
                 value = overlayTextSize.toString(),
-                onClick = {
-                    val next = if (overlayTextSize >= 28) 14 else overlayTextSize + 2
-                    scope.launch { settingsManager.updateOverlayTextSize(next) }
-                }
+                onClick = if (textSizeEnabled) { { activeDialog = SettingsDialog.TEXT_SIZE } } else null
             )
         }
 
@@ -407,7 +345,7 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             SettingsItem(
                 label = "ACTIVE",
                 value = storageLocation,
-                onClick = { showStoragePicker = true }
+                onClick = { activeDialog = SettingsDialog.STORAGE }
             )
             SettingsItem(label = "DIRECTORY", value = "VEGA STING")
         }
@@ -453,10 +391,7 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
             SettingsItem(
                 label = "POWER ACTION", 
                 value = if (powerMode == "VIDEO") "TOGGLE AV" else "TOGGLE AUDIO",
-                onClick = {
-                    val next = if (powerMode == "VIDEO") "AUDIO" else "VIDEO"
-                    scope.launch { settingsManager.updatePowerButtonMode(next) }
-                }
+                onClick = { activeDialog = SettingsDialog.POWER_ACTION }
             )
             SettingsItem(label = "QUICK TILE", value = "ENABLED")
         }
@@ -507,7 +442,7 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
         }
 
         SettingsSection(title = "ABOUT") {
-            SettingsItem(label = "DEVELOPER", value = com.vega.sting.BuildConfig.DEV_NAME, icon = R.drawable.ic_vijaykrsha_logo)
+            SettingsItem(label = "DEVELOPER", value = com.vega.sting.BuildConfig.DEV_NAME, valueIcon = R.drawable.ic_vijaykrsha_logo)
             SettingsItem(
                 label = "WEBSITE",
                 value = "LINK",
@@ -586,10 +521,174 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
     openLegalDocument?.let { document ->
         LegalDocumentDialog(document = document, onDismiss = { openLegalDocument = null })
     }
+
+    when (activeDialog) {
+        SettingsDialog.VIDEO_CODEC -> SelectionDialog(
+            title = "VIDEO CODEC",
+            options = VIDEO_CODEC_OPTIONS.map { SelectionOption(it, it) },
+            selected = videoCodec,
+            onDismiss = { activeDialog = null },
+            onSelect = { scope.launch { settingsManager.updateVideoCodec(it) }; activeDialog = null }
+        )
+
+        SettingsDialog.VIDEO_SIZE -> SelectionDialog(
+            title = "VIDEO SIZE",
+            options = VIDEO_SIZE_OPTIONS.map { SelectionOption(it, it) },
+            selected = videoSize,
+            onDismiss = { activeDialog = null },
+            onSelect = { scope.launch { settingsManager.updateResolution(it) }; activeDialog = null }
+        )
+
+        SettingsDialog.VIDEO_RATIO -> SelectionDialog(
+            title = "VIDEO RATIO",
+            options = VIDEO_RATIO_OPTIONS.map { SelectionOption(it, it) },
+            selected = videoRatio,
+            onDismiss = { activeDialog = null },
+            onSelect = { scope.launch { settingsManager.updateVideoRatio(it) }; activeDialog = null }
+        )
+
+        SettingsDialog.ORIENTATION -> SelectionDialog(
+            title = "ORIENTATION",
+            options = ORIENTATION_OPTIONS.map { SelectionOption(it, orientationLabel(it)) },
+            selected = orientationMode,
+            onDismiss = { activeDialog = null },
+            onSelect = { scope.launch { settingsManager.updateOrientationMode(it) }; activeDialog = null }
+        )
+
+        SettingsDialog.VIDEO_LIMIT -> SelectionDialog(
+            title = "VIDEO FILE LIMIT",
+            options = VIDEO_SEGMENT_OPTIONS.map {
+                SelectionOption(it, StorageHealthManager.formatFileSize(it))
+            },
+            selected = videoLimit,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updateVideoSegmentLimitBytes(it) }
+                activeDialog = null
+            }
+        )
+
+        SettingsDialog.AUDIO_LIMIT -> SelectionDialog(
+            title = "AUDIO FILE LIMIT",
+            options = AUDIO_SEGMENT_OPTIONS.map {
+                SelectionOption(it, StorageHealthManager.formatFileSize(it))
+            },
+            selected = audioLimit,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updateAudioSegmentLimitBytes(it) }
+                activeDialog = null
+            }
+        )
+
+        SettingsDialog.RESERVE -> SelectionDialog(
+            title = "FREE-SPACE RESERVE",
+            options = RESERVE_OPTIONS.map {
+                SelectionOption(it, StorageHealthManager.formatFileSize(it))
+            },
+            selected = reserveBytes,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updateMinimumFreeSpaceBytes(it) }
+                activeDialog = null
+            }
+        )
+
+        SettingsDialog.TIMESTAMP_POSITION -> SelectionDialog(
+            title = "TIMESTAMP POSITION",
+            options = OVERLAY_POSITION_OPTIONS.map { SelectionOption(it.name, it.displayName()) },
+            selected = timestampPosition,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updateTimestampPosition(it) }
+                activeDialog = null
+            }
+        )
+
+        SettingsDialog.TIMESTAMP_FORMAT -> SelectionDialog(
+            title = "TIMESTAMP FORMAT",
+            options = TIMESTAMP_FORMAT_OPTIONS.map { SelectionOption(it, it) },
+            selected = timestampFormat,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updateTimestampFormat(it) }
+                activeDialog = null
+            }
+        )
+
+        SettingsDialog.SIGNATURE_POSITION -> SelectionDialog(
+            title = "SIGNATURE POSITION",
+            options = OVERLAY_POSITION_OPTIONS.map { SelectionOption(it.name, it.displayName()) },
+            selected = signaturePosition,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updateSignaturePosition(it) }
+                activeDialog = null
+            }
+        )
+
+        SettingsDialog.TEXT_SIZE -> SelectionDialog(
+            title = "TEXT SIZE",
+            options = TEXT_SIZE_OPTIONS.map { SelectionOption(it, it.toString()) },
+            selected = overlayTextSize,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updateOverlayTextSize(it) }
+                activeDialog = null
+            }
+        )
+
+        SettingsDialog.POWER_ACTION -> SelectionDialog(
+            title = "POWER ACTION",
+            options = POWER_ACTION_OPTIONS.map { SelectionOption(it.first, it.second) },
+            selected = powerMode,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updatePowerButtonMode(it) }
+                activeDialog = null
+            }
+        )
+
+        SettingsDialog.STORAGE -> SelectionDialog(
+            title = "STORAGE LOCATION",
+            options = availableStorages.map { (type, dir) ->
+                val free = StorageHealthManager.formatBytes(
+                    StorageHealthManager.getFreeSpaceBytes(dir)
+                )
+                SelectionOption(
+                    value = type.name,
+                    label = type.name,
+                    detail = if (type.name == storageLocation) "$free  *" else free
+                )
+            },
+            selected = storageLocation,
+            onDismiss = { activeDialog = null },
+            onSelect = {
+                scope.launch { settingsManager.updateStorageLocation(it) }
+                activeDialog = null
+            },
+            footnote = if (availableStorages.size == 1) "No removable storage detected." else null
+        )
+
+        null -> Unit
+    }
 }
 
+private enum class SettingsDialog {
+    VIDEO_CODEC, VIDEO_SIZE, VIDEO_RATIO, ORIENTATION,
+    VIDEO_LIMIT, AUDIO_LIMIT, RESERVE,
+    TIMESTAMP_POSITION, TIMESTAMP_FORMAT, SIGNATURE_POSITION, TEXT_SIZE,
+    POWER_ACTION, STORAGE
+}
+
+private val VIDEO_CODEC_OPTIONS = listOf("H.264", "H.265")
 private val VIDEO_SIZE_OPTIONS = listOf("AUTO", "480P", "720P", "1080P", "1440P", "4K")
 private val VIDEO_RATIO_OPTIONS = listOf("AUTO", "16:9", "4:3", "1:1", "DISPLAY")
+private val ORIENTATION_OPTIONS = listOf("PORTRAIT", "LANDSCAPE", "FOLLOW_SENSOR")
+private val TIMESTAMP_FORMAT_OPTIONS = listOf("yyyy-MM-dd HH:mm:ss", "yyyy/MM/dd HH:mm:ss")
+private val TEXT_SIZE_OPTIONS = listOf(14, 16, 18, 20, 22, 24, 26, 28)
+private val POWER_ACTION_OPTIONS = listOf("VIDEO" to "TOGGLE AV", "AUDIO" to "TOGGLE AUDIO")
+private val OVERLAY_POSITION_OPTIONS = OverlayPosition.entries.toList()
 
 private const val MB = 1024L * 1024L
 private const val GB = 1024L * MB
@@ -598,20 +697,10 @@ private val VIDEO_SEGMENT_OPTIONS = listOf(500L * MB, 1L * GB, 2L * GB, 4L * GB)
 private val AUDIO_SEGMENT_OPTIONS = listOf(50L * MB, 100L * MB, 250L * MB, 500L * MB)
 private val RESERVE_OPTIONS = listOf(100L * MB, 300L * MB, 500L * MB, 1L * GB)
 
-private fun cycleBytes(options: List<Long>, current: Long): Long {
-    val index = options.indexOf(current)
-    return if (index < 0) options.first() else options[(index + 1) % options.size]
-}
-
-private fun cycleOption(options: List<String>, current: String): String {
-    val index = options.indexOf(current)
-    return if (index < 0) options.first() else options[(index + 1) % options.size]
-}
-
-private fun nextOverlayPosition(current: String): String {
-    val positions = OverlayPosition.entries
-    val currentIndex = positions.indexOf(OverlayPosition.from(current))
-    return positions[(currentIndex + 1) % positions.size].name
+/** Friendly display for a stored orientation mode. Storage keeps the raw value. */
+private fun orientationLabel(mode: String): String = when (mode) {
+    "FOLLOW_SENSOR" -> "FOLLOW SENSOR"
+    else -> mode
 }
 
 @Composable
@@ -628,7 +717,7 @@ fun SettingsItem(
     label: String,
     value: String,
     onClick: (() -> Unit)? = null,
-    @DrawableRes icon: Int? = null
+    @DrawableRes valueIcon: Int? = null
 ) {
     Row(
         modifier = Modifier
@@ -637,14 +726,6 @@ fun SettingsItem(
             .clickable(enabled = onClick != null) { onClick?.invoke() },
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (icon != null) {
-            Image(
-                painter = painterResource(icon),
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-        }
         Text(
             text = label,
             modifier = Modifier.weight(0.48f),
@@ -654,15 +735,43 @@ fun SettingsItem(
             overflow = TextOverflow.Ellipsis
         )
         Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = "[ $value ]",
+        Row(
             modifier = Modifier.weight(0.52f),
-            style = MaterialTheme.typography.bodySmall,
-            color = if (onClick != null) AccentOrange else TextPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.End
-        )
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (valueIcon != null) {
+                val valueColor = if (onClick != null) AccentOrange else TextPrimary
+                Text(
+                    text = "[",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = valueColor,
+                    maxLines = 1
+                )
+                Image(
+                    painter = painterResource(valueIcon),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "$value]",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = valueColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else {
+                Text(
+                    text = "[ $value ]",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (onClick != null) AccentOrange else TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End
+                )
+            }
+        }
     }
 }
 

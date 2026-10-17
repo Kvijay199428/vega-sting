@@ -67,3 +67,12 @@ script-copier.py
 # Deferred / local artifacts
 gimble.zip
 build_release.log
+
+# ============================================================
+# Brand asset packages — always tracked, never ignored.
+# Placed last so these re-inclusions win over *.apk / *.cdr above.
+# ============================================================
+!.assets/
+!.assets/**
+!/VOS.cdr
+!/Backup_of_VOS.cdr

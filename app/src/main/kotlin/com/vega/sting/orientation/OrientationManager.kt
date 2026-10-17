@@ -1,7 +1,6 @@
 package com.vega.sting.orientation
 
 import android.content.Context
-import android.os.SystemClock
 import android.view.OrientationEventListener
 import android.view.WindowManager
 
@@ -39,9 +38,6 @@ class OrientationManager(
     private val gate = ReadingGate()
 
     private var started = false
-
-    // TEMP-AUDIT sample counter
-    private var sampleCount = 0
 
     fun start() {
         if (started) return
@@ -82,22 +78,8 @@ class OrientationManager(
 
     private fun onAngle(rawAngle: Int) {
         if (rawAngle == OrientationEventListener.ORIENTATION_UNKNOWN) return
-        sampleCount++
-        // TEMP-AUDIT: prove the listener is streaming (rate-limited)
-        if ((sampleCount and 31) == 1) {
-            android.util.Log.i("OrientationManager", "SAMPLE n=$sampleCount angle=$rawAngle rot=${state.rotation}")
-        }
-
-        val before = state.rotation
         if (state.onAngle(rawAngle)) {
             gate.signal()
-        }
-        // TEMP-AUDIT: flip log for single-clip orientation sweep
-        if (state.rotation != before) {
-            android.util.Log.i(
-                "OrientationManager",
-                "FLIP rot=${state.rotation} n=$sampleCount t=${SystemClock.elapsedRealtime()}"
-            )
         }
     }
 }

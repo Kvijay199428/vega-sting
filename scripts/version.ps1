@@ -9,14 +9,19 @@
 #       -> prints the version to build (does NOT touch version.properties)
 #
 #   commit -Channel stable|dev -VersionName <name> -VersionCode <n>
-#       -> advances version.properties after a verified build
+#       -> advances version.properties after a verified build. REFUSES to
+#          commit a versionCode that has already been consumed, so two
+#          published APKs can never share a code.
+#
+#   verify -Channel stable|dev -VersionCode <n> [-VersionName <name>]
+#       -> fails if the code (or the release tag) has already been used.
 #
 # Separating "next" from "commit" means a failed or abandoned build never
 # consumes a version code.
 # ============================================================================
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('next', 'commit', 'show')][string]$Mode,
+    [Parameter(Mandatory = $true)][ValidateSet('next', 'commit', 'show', 'verify')][string]$Mode,
     [ValidateSet('stable', 'dev')][string]$Channel = 'stable',
     [switch]$Respin,
     [switch]$Minor,
@@ -85,11 +90,15 @@ function WriteProps([hashtable]$Map) {
         '# Edited automatically by release.bat / debug.bat. Do not hand-edit.'
         '# ============================================================================'
         ''
-        '# Globally increasing versionCode shared by BOTH channels.'
+        '# Globally increasing versionCode, unique to every published APK.'
         '#'
-        '# Every release -- STABLE or DEBUG -- consumes the current value and then'
-        '# advances it, so versionCode always grows monotonically across channels.'
-        '# That keeps an in-place install possible in either direction:'
+        '# One monotonically increasing sequence is shared by BOTH channels: every'
+        '# release -- STABLE or DEBUG -- consumes the current value and advances it,'
+        '# so versionCode always grows monotonically across channels.'
+        '#'
+        '# Two published APKs are never allowed to carry the same code. The commit'
+        '# step refuses a code that was already consumed, which keeps an in-place'
+        '# install possible in either direction:'
         '#   STABLE 17 -> DEBUG 18 (ordinary update)'
         '#   DEBUG 18  -> STABLE 19 (ordinary update)'
         '# A channel is identified by the release manifest / build flavor, never by'
@@ -172,6 +181,61 @@ switch ($Mode) {
         Write-Output "minSupportedVersionCode=$($props['minSupported.versionCode'])"
         break
     }
+    'verify' {
+        if ($VersionCode -le 0) { Fail 'verify requires -VersionCode.' }
+
+        $conflicts = @()
+
+        # 1) Locally packaged releases: any dist\*\update.json that already
+        #    claims this code.
+        $dist = Join-Path $Root 'dist'
+        if (Test-Path -LiteralPath $dist) {
+            foreach ($manifest in Get-ChildItem -Path $dist -Filter 'update.json' -Recurse -ErrorAction SilentlyContinue) {
+                try {
+                    $json = Get-Content -LiteralPath $manifest.FullName -Raw | ConvertFrom-Json
+                }
+                catch { continue }
+                if ($null -ne $json.PSObject.Properties['versionCode'] -and
+                    [int]$json.versionCode -eq $VersionCode) {
+                    $conflicts += "local: $($manifest.FullName) (channel $($json.channel), version $($json.versionName))"
+                }
+            }
+        }
+
+        # 2) Published releases: refuse to reuse a tag that is already out
+        #    there. Best effort -- skipped when gh is unavailable or offline.
+        if ($VersionName) {
+            $tag = if ($Channel -eq 'dev') { "debug-v$VersionName" } else { "v$VersionName" }
+            if (Get-Command gh -ErrorAction SilentlyContinue) {
+                # Native stderr is treated as a terminating error while
+                # $ErrorActionPreference is 'Stop', so relax it for the probe and
+                # rely on the exit code instead.
+                $savedEap = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try {
+                    & gh release view $tag --json tagName *> $null
+                    $exists = ($LASTEXITCODE -eq 0)
+                }
+                catch {
+                    $exists = $false
+                    Write-Warning "Could not check GitHub for '$tag' (offline?); continuing with local checks only."
+                }
+                finally {
+                    $ErrorActionPreference = $savedEap
+                }
+                if ($exists) {
+                    $conflicts += "published: release '$tag' already exists"
+                }
+            }
+        }
+
+        if ($conflicts.Count -gt 0) {
+            Fail ("version $VersionName (code $VersionCode) is not free:`n  " + ($conflicts -join "`n  "))
+        }
+        Write-Output 'unique=1'
+        Write-Output "versionCode=$VersionCode"
+        break
+    }
     'commit' {
         if (-not $VersionName) { Fail 'commit requires -VersionName.' }
         if ($VersionCode -le 0) { Fail 'commit requires -VersionCode.' }
@@ -183,13 +247,16 @@ switch ($Mode) {
             $stableBase = $Matches[1]
             $props['release.baseVersion'] = $stableBase
 
-            # Advance the shared, globally increasing versionCode past the code
-            # this build consumed. The build may have run with an injected code;
-            # adopt it if it is ahead, then move past it so the next release on
-            # EITHER channel never reuses a code.
-            $code = [int]$props['next.versionCode']
-            if ($VersionCode -gt $code) { $code = $VersionCode }
-            $props['next.versionCode'] = [string]($code + 1)
+            # The built APK must have consumed the code `next` handed out. A
+            # LOWER code means that code was already used by an earlier
+            # published release: refuse to commit rather than silently reuse it,
+            # so two APKs in the wild can never share a versionCode. (A code
+            # ahead of `next` is still adopted, e.g. a manually injected build.)
+            $expected = [int]$props['next.versionCode']
+            if ($VersionCode -lt $expected) {
+                Fail "versionCode $VersionCode has already been consumed; the next free code is $expected. Rebuild the release."
+            }
+            $props['next.versionCode'] = [string]($VersionCode + 1)
 
             # Advance the development line past the newly shipped stable base,
             # but never move it backwards if dev is already ahead.
@@ -208,12 +275,14 @@ switch ($Mode) {
             $props['debug.buildNumber'] = $Matches[2]
             $props['debug.versionName'] = $VersionName
 
-            # OPTION A: a DEBUG release also consumes the shared versionCode, so
-            # advance the same counter STABLE uses. Adopt an injected code that
-            # is ahead, then move past it.
-            $code = [int]$props['next.versionCode']
-            if ($VersionCode -gt $code) { $code = $VersionCode }
-            $props['next.versionCode'] = [string]($code + 1)
+            # OPTION A: a DEBUG release also consumes the shared versionCode.
+            # Refuse a code that was already consumed (a lower code than `next`
+            # means an earlier release used it); adopt a code that is ahead.
+            $expected = [int]$props['next.versionCode']
+            if ($VersionCode -lt $expected) {
+                Fail "versionCode $VersionCode has already been consumed; the next free code is $expected. Rebuild the release."
+            }
+            $props['next.versionCode'] = [string]($VersionCode + 1)
         }
 
         WriteProps $props

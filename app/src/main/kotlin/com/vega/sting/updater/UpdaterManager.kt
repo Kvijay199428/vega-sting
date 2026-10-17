@@ -137,6 +137,13 @@ class UpdaterManager(private val context: Context) {
                 }
                 UpdateChecker.SelectionResult.UpToDate -> CheckResult.UpToDate
                 is UpdateChecker.SelectionResult.ChannelAhead -> CheckResult.ChannelAhead(result.reason)
+                is UpdateChecker.SelectionResult.PolicyViolation -> {
+                    // Two published APKs sharing a version code is a release
+                    // process bug, never an update to offer. Surface it as a
+                    // diagnostic and leave the installed build alone.
+                    Log.w(TAG, "Version-policy violation: ${result.reason}")
+                    CheckResult.Incompatible(result.reason)
+                }
                 is UpdateChecker.SelectionResult.Rejected -> CheckResult.Incompatible(result.reason)
                 is UpdateChecker.SelectionResult.Failed -> CheckResult.Failed(result.reason)
             }

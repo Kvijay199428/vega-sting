@@ -14,10 +14,12 @@ import java.security.MessageDigest
  * Verifies that a downloaded APK can actually replace the installed app.
  *
  * Android only accepts an in-place update when the candidate APK has the same
- * package id, a compatible signing certificate and a version code that is not
- * lower than the installed one. The channel the user selected does NOT relax any
- * of these rules, so every download is checked here before it is ever handed to
- * the system Package Installer.
+ * package id, a compatible signing certificate and a **strictly higher** version
+ * code than the installed build. Version codes are globally unique, so an equal
+ * code is never a newer build and a lower one is a downgrade; both are refused
+ * (except a deliberate manual channel-switch reinstall). The channel the user
+ * selected does NOT relax any of these rules, so every download is checked here
+ * before it is ever handed to the system Package Installer.
  */
 object ApkValidator {
 
@@ -67,6 +69,26 @@ object ApkValidator {
     fun isSha256(hex: String?): Boolean {
         val value = hex?.trim() ?: return false
         return value.length == SHA256_HEX_LENGTH && value.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
+    }
+
+    /**
+     * Explains why [candidateCode] cannot replace the installed [installedCode],
+     * or null when it may. Pure, so the equal/lower wording is unit-testable.
+     *
+     * With globally unique version codes, an *equal* code means there is simply
+     * no newer build (there is nothing to install); a strictly *lower* code is a
+     * downgrade, which Android refuses outright. [allowDowngrade] is the manual
+     * channel-switch case, where a deliberate reinstall is permitted.
+     */
+    fun versionGuardReason(candidateCode: Long, installedCode: Long, allowDowngrade: Boolean): String? {
+        if (allowDowngrade || candidateCode > installedCode) return null
+        return if (candidateCode == installedCode) {
+            "The download is version code $candidateCode, the same as the installed build " +
+                "($installedCode); there is no newer build to install."
+        } else {
+            "The download is version code $candidateCode, older than the installed build " +
+                "($installedCode); Android will not replace a newer app with an older one."
+        }
     }
 
     // ------------------------------------------------------------------
@@ -143,12 +165,8 @@ object ApkValidator {
                 "The APK version name ${facts.versionName} does not match the release manifest."
             )
         }
-        if (!allowDowngrade && facts.versionCode <= BuildConfig.VERSION_CODE) {
-            return Result.Invalid(
-                "The APK version code ${facts.versionCode} is not newer than the installed " +
-                    "build (${BuildConfig.VERSION_CODE}); Android rejects downgrades."
-            )
-        }
+        versionGuardReason(facts.versionCode, BuildConfig.VERSION_CODE.toLong(), allowDowngrade)
+            ?.let { return Result.Invalid(it) }
 
         val installedSigners = installedSignerDigests(context)
         if (installedSigners.isEmpty()) {

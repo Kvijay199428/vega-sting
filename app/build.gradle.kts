@@ -31,15 +31,39 @@ fun buildProp(key: String): String? =
 val nextVersionCode = versionProp("next.versionCode", "1").toIntOrNull() ?: 1
 val minSupportedVersionCode = versionProp("minSupported.versionCode", "1").toIntOrNull() ?: 1
 
-val stableVersionName = versionProp("release.baseVersion", "1.0.0")
-val devVersionName = versionProp(
-    "debug.versionName",
-    "${versionProp("debug.baseVersion", "1.0.0")}-dev.1"
-)
+// Version names. The values in version.properties describe the LAST released
+// build on each channel, but versionCode is taken from next.versionCode (the
+// code reserved for the NEXT release). A build must therefore report the NEXT
+// release's *name* too, or the two halves of the pair come from different
+// points in the version timeline. Deriving both from one "next" computation
+// makes a locally built APK report exactly the pair the following release will
+// carry, so the in-app About screen always agrees with the published
+// update.json.
+fun bumpPatch(version: String): String {
+    val parts = version.split(".").map { it.toIntOrNull() ?: 0 }
+    val major = parts.getOrElse(0) { 0 }
+    val minor = parts.getOrElse(1) { 0 }
+    val patch = parts.getOrElse(2) { 0 }
+    return "$major.$minor.${patch + 1}"
+}
+
+val nextStableVersionName = bumpPatch(versionProp("release.baseVersion", "1.0.0"))
+val nextDevVersionName = run {
+    val base = versionProp("debug.baseVersion", "1.0.0")
+    val build = (versionProp("debug.buildNumber", "0").toIntOrNull() ?: 0) + 1
+    "$base-dev.$build"
+}
 
 // Values injected by the release scripts for the build currently in progress.
 val overrideVersionName = buildProp("vegaVersionName")
 val overrideVersionCode = buildProp("vegaVersionCode")?.toIntOrNull()
+
+/**
+ * True for a build that did NOT go through release.bat (no -P overrides). Such
+ * a build keeps the Android debug keystore and must never be published, so the
+ * About screen labels it explicitly.
+ */
+val isLocalBuild = overrideVersionName == null
 
 // ---------------------------------------------------------------------------
 // Signing configuration (unchanged policy)
@@ -69,8 +93,9 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = overrideVersionCode ?: nextVersionCode
-        versionName = overrideVersionName ?: stableVersionName
+        versionName = overrideVersionName ?: nextStableVersionName
 
+        buildConfigField("boolean", "IS_LOCAL_BUILD", isLocalBuild.toString())
         buildConfigField("int", "MIN_SUPPORTED_VERSION_CODE", minSupportedVersionCode.toString())
         buildConfigField("String", "GITHUB_OWNER", "\"Kvijay199428\"")
         buildConfigField("String", "GITHUB_REPO", "\"VEGA-STING\"")
@@ -89,13 +114,13 @@ android {
     productFlavors {
         create("stable") {
             dimension = "channel"
-            versionName = overrideVersionName ?: stableVersionName
+            versionName = overrideVersionName ?: nextStableVersionName
             buildConfigField("String", "DEFAULT_UPDATE_CHANNEL", "\"STABLE\"")
             manifestPlaceholders["defaultUpdateChannel"] = "STABLE"
         }
         create("dev") {
             dimension = "channel"
-            versionName = overrideVersionName ?: devVersionName
+            versionName = overrideVersionName ?: nextDevVersionName
             buildConfigField("String", "DEFAULT_UPDATE_CHANNEL", "\"DEBUG\"")
             manifestPlaceholders["defaultUpdateChannel"] = "DEBUG"
         }

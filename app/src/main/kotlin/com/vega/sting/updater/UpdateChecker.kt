@@ -79,6 +79,18 @@ object UpdateChecker {
         data class ChannelAhead(val reason: String) : SelectionResult
 
         /**
+         * The newest candidate on the selected channel carries the SAME version
+         * code as the installed build but comes from a *different* channel.
+         *
+         * Because version codes are globally unique (one monotonically increasing
+         * sequence shared by both channels), two published APKs must never share
+         * a code. Seeing one is a release-policy problem, not an update, so it is
+         * reported as a diagnostic instead of being offered -- and never silently
+         * substituted with another release.
+         */
+        data class PolicyViolation(val reason: String) : SelectionResult
+
+        /**
          * Releases exist for this channel but none can be installed (wrong
          * channel/package, bad checksum, downgrade, …). [reason] is shown to
          * the user instead of silently falling back to the other channel.
@@ -210,20 +222,23 @@ object UpdateChecker {
      * Selects the highest compatible release for [channel].
      *
      * A *channel switch* (the selected channel differs from the channel the
-     * installed build came from) offers that channel's newest valid release.
-     * It may install an **equal** version code -- Android permits an equal-code
-     * reinstall but never a lower one -- and, when [allowSwitchDowngrade] is set
-     * (a manual check), even a lower one: the switch is a deliberate reinstall
-     * and Android's refusal of a true downgrade is warned about before the
-     * download and reported after the attempt. A same-channel update still has
-     * to be a real bump: a strictly higher version code, or an equal code with a
-     * newer version name (the `x.y.z-dev.N` line shares the stable's version
-     * code).
+     * installed build came from) offers that channel's newest valid release when
+     * it is strictly newer; a manual switch ([allowSwitchDowngrade]) may also
+     * offer an *older* one, because the switch is a deliberate reinstall and
+     * Android's refusal of a true downgrade is warned about before the download
+     * and reported after the attempt.
+     *
+     * A same-channel update must be a real bump: a strictly higher version code.
+     * Version codes are globally unique and strictly increasing across both
+     * channels, so an equal code is never a newer build -- it means there is
+     * nothing to install. An equal code seen while *switching* channels cannot
+     * happen with a correct release process; it is reported as a
+     * [SelectionResult.PolicyViolation] diagnostic rather than offered.
      *
      * @param installedChannel the channel the installed build was published on
      *   (defaults to the selected channel, i.e. no switch)
-     * @param installedVersionName the installed build's version name, used to
-     *   order equal version codes within the same channel
+     * @param installedVersionName the installed build's version name (kept for
+     *   diagnostics; installability is decided by version code alone)
      * @param allowSwitchDowngrade whether a channel switch may offer a release
      *   whose version code is lower than the installed build (manual checks only,
      *   so the automatic check stays quiet on a downgrade)
@@ -266,6 +281,7 @@ object UpdateChecker {
         var best: UpdateInfo? = null
         var highestSeenCode = Long.MIN_VALUE
         var highestSeenName: String? = null
+        var sawEqualCrossChannel = false
         val reasons = mutableListOf<String>()
 
         for (release in candidates) {
@@ -336,18 +352,27 @@ object UpdateChecker {
                 highestSeenName = manifest.versionName
             }
 
+            // An equal code on a *switch* is a policy violation, not an update:
+            // version codes are globally unique, so this can only mean a
+            // mis-published release. Record it and keep looking; if nothing
+            // installable turns up we surface it as a diagnostic.
+            if (switchingChannel && manifest.versionCode == installedVersionCode) {
+                sawEqualCrossChannel = true
+                reasons += "${release.tagName}: version code ${manifest.versionCode} matches the installed " +
+                    "build's code but comes from a different channel (${installedChannel.label} -> ${channel.label})"
+                continue
+            }
+
             val installable =
                 if (switchingChannel) {
-                    // A switch is a deliberate reinstall: it may install the same
-                    // code, and -- for a manual check -- even a lower one. Android
-                    // refuses a true downgrade, which the UI warns about before
-                    // the download and reports after the install attempt.
-                    allowSwitchDowngrade || manifest.versionCode >= installedVersionCode
-                } else {
+                    // A switch is a deliberate reinstall: an ordinary update when
+                    // newer, a manual reinstall when older. Equal is handled above.
                     manifest.versionCode > installedVersionCode ||
-                        (manifest.versionCode == installedVersionCode &&
-                            installedVersionName.isNotBlank() &&
-                            compareVersions(manifest.versionName, installedVersionName) > 0)
+                        (manifest.versionCode < installedVersionCode && allowSwitchDowngrade)
+                } else {
+                    // Same channel: codes are globally unique and strictly
+                    // increasing, so only a strictly higher code is an update.
+                    manifest.versionCode > installedVersionCode
                 }
             if (!installable) {
                 reasons += "${release.tagName}: version code ${manifest.versionCode} is not newer than $installedVersionCode"
@@ -377,8 +402,19 @@ object UpdateChecker {
 
         best?.let { return SelectionResult.Available(it) }
 
-        // Nothing installable. When the newest release this install could take is
-        // not newer than what's running, the ordinary answer is "up to date".
+        // Nothing installable. A cross-channel equal code is a release-policy
+        // problem, not a "you're up to date" -- report it explicitly.
+        if (sawEqualCrossChannel) {
+            return SelectionResult.PolicyViolation(
+                "The newest ${channel.label} release uses the same version code " +
+                    "($installedVersionCode) as your installed ${installedChannel.label} build. " +
+                    "With unique version codes this should be impossible, so it is reported " +
+                    "as a release-policy problem instead of an update."
+            )
+        }
+
+        // When the newest release this install could take is not newer than what's
+        // running, the ordinary answer is "up to date".
         // This also keeps the automatic check quiet after a channel switch whose
         // target channel only has older builds: a downgrade is offered on manual
         // checks only (see [allowSwitchDowngrade]), so the switch prompt comes

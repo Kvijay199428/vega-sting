@@ -56,4 +56,27 @@ class ApkValidatorTest {
         assertFalse(ApkValidator.isSha256("g".repeat(64)))
         assertFalse(ApkValidator.isSha256(null))
     }
+
+    @Test
+    fun `versionGuardReason allows a strictly newer code`() {
+        assertEquals(null, ApkValidator.versionGuardReason(19, 18, allowDowngrade = false))
+    }
+
+    @Test
+    fun `versionGuardReason explains an equal code as no newer build`() {
+        val reason = ApkValidator.versionGuardReason(18, 18, allowDowngrade = false)
+        assertTrue(reason != null && reason.contains("same as the installed build"))
+    }
+
+    @Test
+    fun `versionGuardReason explains a lower code as a downgrade`() {
+        val reason = ApkValidator.versionGuardReason(17, 18, allowDowngrade = false)
+        assertTrue(reason != null && reason.contains("older than the installed build"))
+    }
+
+    @Test
+    fun `versionGuardReason permits an equal or lower code when a downgrade is allowed`() {
+        assertEquals(null, ApkValidator.versionGuardReason(18, 18, allowDowngrade = true))
+        assertEquals(null, ApkValidator.versionGuardReason(17, 18, allowDowngrade = true))
+    }
 }

@@ -394,10 +394,10 @@ class UpdateCheckerTest {
     // ---- channel switching ----
 
     @Test
-    fun `switching channel with an equal version code is offered`() {
-        // A STABLE install selecting DEBUG: the debug build shares the stable's
-        // version code (Android allows an equal-code reinstall), so it must be
-        // offered rather than reported as up to date.
+    fun `switching channel with an equal version code is a policy violation`() {
+        // Version codes are globally unique, so a DEBUG build sharing the
+        // installed STABLE build's code cannot be a legitimate release. It must
+        // be reported as a policy violation, never offered as an update.
         val result = UpdateChecker.selectUpdate(
             releases = listOf(debugRelease()),
             channel = UpdateChannel.DEBUG,
@@ -407,8 +407,7 @@ class UpdateCheckerTest {
             installedVersionName = "2.0.2",
             fetchManifest = { manifest(versionName = "2.0.2-dev.1", versionCode = 14) }
         )
-        assertTrue(result is UpdateChecker.SelectionResult.Available)
-        assertEquals(14L, (result as UpdateChecker.SelectionResult.Available).update.versionCode)
+        assertTrue(result is UpdateChecker.SelectionResult.PolicyViolation)
     }
 
     @Test
@@ -491,9 +490,11 @@ class UpdateCheckerTest {
     }
 
     @Test
-    fun `same-channel equal code with a newer dev build is offered`() {
-        // Debug builds share a version code, so consecutive dev builds are told
-        // apart by their versionName.
+    fun `same-channel equal code is up to date, not an offer`() {
+        // Version codes are globally unique, so an equal code (even with a
+        // "newer" versionName) is never a newer build: there is nothing to
+        // install. The updater must say so instead of offering a build Android
+        // would reject.
         val result = UpdateChecker.selectUpdate(
             releases = listOf(debugRelease(tag = "debug-v2.0.4-dev.2", apkName = "vega-sting-debug-2.0.4-dev.2.apk")),
             channel = UpdateChannel.DEBUG,
@@ -503,8 +504,37 @@ class UpdateCheckerTest {
             installedVersionName = "2.0.4-dev.1",
             fetchManifest = { manifest(versionName = "2.0.4-dev.2", versionCode = 15, apkAsset = "vega-sting-debug-2.0.4-dev.2.apk") }
         )
+        assertEquals(UpdateChecker.SelectionResult.UpToDate, result)
+    }
+
+    @Test
+    fun `same-channel strictly higher code is offered`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease(tag = "debug-v2.0.4-dev.2", apkName = "vega-sting-debug-2.0.4-dev.2.apk")),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 15,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.DEBUG,
+            installedVersionName = "2.0.4-dev.1",
+            fetchManifest = { manifest(versionName = "2.0.4-dev.2", versionCode = 16, apkAsset = "vega-sting-debug-2.0.4-dev.2.apk") }
+        )
         assertTrue(result is UpdateChecker.SelectionResult.Available)
-        assertEquals("2.0.4-dev.2", (result as UpdateChecker.SelectionResult.Available).update.versionName)
+        assertEquals(16L, (result as UpdateChecker.SelectionResult.Available).update.versionCode)
+    }
+
+    @Test
+    fun `channel switch with a strictly higher code is an ordinary update`() {
+        val result = UpdateChecker.selectUpdate(
+            releases = listOf(debugRelease()),
+            channel = UpdateChannel.DEBUG,
+            installedVersionCode = 14,
+            installedPackageName = pkg,
+            installedChannel = UpdateChannel.STABLE,
+            installedVersionName = "2.0.2",
+            fetchManifest = { manifest(versionName = "2.0.2-dev.1", versionCode = 15) }
+        )
+        assertTrue(result is UpdateChecker.SelectionResult.Available)
+        assertEquals(15L, (result as UpdateChecker.SelectionResult.Available).update.versionCode)
     }
 
     @Test

@@ -518,8 +518,20 @@ val videoCodec by settingsManager.videoCodec.collectAsState(initial = "H.265")
                 value = "GITHUB",
                 onClick = { openUrl(context, com.vega.sting.BuildConfig.GITHUB_REPO_URL) }
             )
-            SettingsItem(label = "VERSION", value = com.vega.sting.BuildConfig.VERSION_NAME)
+            SettingsItem(
+                label = "VERSION",
+                value = com.vega.sting.BuildConfig.VERSION_NAME +
+                    if (com.vega.sting.BuildConfig.IS_LOCAL_BUILD) "  ·  LOCAL" else ""
+            )
             SettingsItem(label = "BUILD", value = com.vega.sting.BuildConfig.VERSION_CODE.toString())
+            if (com.vega.sting.BuildConfig.IS_LOCAL_BUILD) {
+                Text(
+                    text = "Local build — debug-signed, not a published release.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
+                )
+            }
             SettingsItem(
                 label = "CHECK FOR UPDATES",
                 value = if (isRecording) "RECORDING…" else "TAP TO CHECK",

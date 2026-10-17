@@ -39,9 +39,9 @@ decides what a user is offered.
 ## 3. Version policy
 
 * A **single, globally increasing `versionCode`** (`next.versionCode`) is shared
-  by **both** channels. Every release — STABLE or DEBUG — consumes the current
-  value and then advances it, so `versionCode` grows monotonically across the
-  channel switch.
+  by **both** channels, and no two published APKs may ever carry the same code.
+  Every release — STABLE or DEBUG — consumes the current value and then advances
+  it, so `versionCode` grows monotonically across the channel switch.
 * This is what keeps an **in‑place install possible in either direction**:
 
   | Move            | Codes        | Result                         |
@@ -52,21 +52,27 @@ decides what a user is offered.
   (If each channel had its own counter, moving DEBUG → STABLE could produce a
   lower code that Android rejects — forcing an uninstall and data loss.)
 * A channel is identified by the release manifest / build flavor — **never** by
-  the `versionCode`.
+  the `versionCode`. Two channels publishing the same code is a **release‑policy
+  violation**, reported as a diagnostic (never silently offered as an update).
 * `next.versionCode` is advanced **only after** a build succeeds and passes
-  verification, and it is advanced by **both** `--stable` and `--dev`.
+  verification, and it is advanced by **both** `--stable` and `--dev`. The
+  `commit` step **refuses** a code that was already consumed (a lower
+  `-VersionCode` than the reserved one), so a code can never be reused.
+* `release.bat` runs a `version.ps1 verify` **preflight** before building: it
+  fails if the computed code already appears in a local `dist/**/update.json` or
+  if the release tag already exists on GitHub.
 * Version names:
   * STABLE: `x.y.z` (plain — no suffix; see §8 for why)
   * DEBUG:  `x.y.z-dev.N`
 * `version.properties` is the single source of truth:
 
 ```properties
-next.versionCode=18            # versionCode shared by the NEXT release on EITHER channel
+next.versionCode=20            # versionCode reserved for the NEXT release on EITHER channel
 minSupported.versionCode=1     # oldest installed code still eligible for OTA
 release.baseVersion=2.0.5      # versionName of the LAST stable release
 debug.baseVersion=2.0.6
-debug.buildNumber=1
-debug.versionName=2.0.6-dev.1
+debug.buildNumber=2
+debug.versionName=2.0.6-dev.2
 ```
 
 Rules applied by `scripts/version.ps1`:
@@ -81,9 +87,9 @@ Rules applied by `scripts/version.ps1`:
   and advances `next.versionCode`**, exactly like a stable build.
 * After a successful `--stable` build the dev base auto‑advances to
   `stableBase + 1 patch` (but never moves backwards).
-* The updater still compares version **names** to order equal codes within a
-  channel during the transition window (§8), but new releases no longer rely on
-  equal codes.
+* A locally built APK (no `-PvegaVersionName`) reports the **next** release's
+  `versionName`/`versionCode` pair, so its in‑app About screen matches that
+  release's `update.json`. Such a build is labelled `LOCAL` and is debug‑signed.
 
 ## 4. Release naming & `update.json`
 
@@ -123,17 +129,20 @@ manifest's `minSupportedVersionCode`.
 
 Candidate eligibility depends on whether the user is **switching channels**:
 
-* Same channel — a real bump is required: a strictly higher `versionCode`, or an
-  equal code with a newer `versionName` (the shared‑code `x.y.z-dev.N` line).
-* Channel switch — the selected channel's **newest valid release** is offered, so
-  both channels' newest builds are reachable from either side. An **equal**
-  `versionCode` is a plain equal‑code reinstall. On a **manual** check (the
-  channel‑switch confirm and **Check for updates**) a *lower* `versionCode` is
-  offered too — a deliberate reinstall — but the update dialog warns that it is
-  older and Android refuses to replace a newer app with an older one. The
-  throttled automatic check never offers a downgrade, so it stays quiet until a
-  newer build ships. Android's `INSTALL_FAILED_VERSION_DOWNGRADE` gives no result
-  callback, so a refused downgrade is reported on the next launch.
+* Same channel — a real bump is required: a **strictly higher** `versionCode`.
+  Because codes are globally unique, an equal code is never a newer build; it
+  means "up to date", not an update.
+* Channel switch — the selected channel's **newest valid release** is offered
+  when it is strictly newer. An **equal** `versionCode` on a *different* channel
+  is a release‑policy violation (two published APKs sharing a code); it is
+  reported as a diagnostic and never offered and never silently substituted.
+  On a **manual** check (the channel‑switch confirm and **Check for updates**) a
+  *lower* `versionCode` is offered too — a deliberate reinstall — but the update
+  dialog warns that it is older and Android refuses to replace a newer app with
+  an older one. The throttled automatic check never offers a downgrade, so it
+  stays quiet until a newer build ships. Android's
+  `INSTALL_FAILED_VERSION_DOWNGRADE` gives no result callback, so a refused
+  downgrade is reported on the next launch.
 
 ## 5. Building a release
 
@@ -144,6 +153,7 @@ release.bat --stable --major      :: next major production release
 release.bat --stable --respin     :: alias of --stable (patch bump)
 release.bat --dev                 :: next DEBUG/prerelease build
 release.bat --dev --base 2.0.3    :: start a new DEBUG base
+release.bat --dev --publish       :: build and create the GitHub release
 
 debug.bat                          :: alias for `release.bat --dev`
 ```
@@ -151,14 +161,20 @@ debug.bat                          :: alias for `release.bat --dev`
 Each run:
 
 1. derives the version from `version.properties` (no manual prompt);
-2. runs the channel unit tests (`testStableReleaseUnitTest` / `testDevReleaseUnitTest`);
-3. assembles `assembleStableRelease` / `assembleDevRelease` with
+2. **preflight** (`version.ps1 verify`): refuses a versionCode that is already
+   present in a local `dist/**/update.json`, or a release tag that already exists
+   on GitHub;
+3. runs the channel unit tests (`testStableReleaseUnitTest` / `testDevReleaseUnitTest`);
+4. assembles `assembleStableRelease` / `assembleDevRelease` with
    `-PvegaVersionName` / `-PvegaVersionCode`;
-4. verifies the APK (package id, version, embedded default channel, signature,
+5. verifies the APK (package id, version, embedded default channel, signature,
    keystore match) and writes `dist/<channel>/` — the APK, `update.json`, the
    `.sha256` file and `PUBLISH.txt`;
-5. advances `version.properties` **only** on success; returns a non‑zero exit
-   code on any failure and never publishes anything.
+6. advances `version.properties` **only** on success (and refuses a code that was
+   already consumed); returns a non‑zero exit code on any failure;
+7. with `--publish`, creates the GitHub release (pre‑release for DEBUG) and
+   attaches the three artifacts; otherwise it leaves them in `dist/` for a manual
+   upload and prints the tag to use.
 
 Gradle files are never edited by text replacement, and the other channel's
 version name is never touched.
@@ -222,15 +238,19 @@ older one in place. The flow is:
 > app warns about this rather than silently losing data. A future release may add
 > one (see the follow‑up note at the end of this document).
 
-## 7. Publishing (manual)
+## 7. Publishing
 
-1. Run the appropriate `release.bat` invocation.
+1. Run the appropriate `release.bat` invocation (add `--publish` to create the
+   GitHub release automatically, or do the steps below by hand).
 2. Create a GitHub release with the printed tag (`v<versionName>` for STABLE,
    `debug-v<versionName>` for DEBUG).
 3. Publish it as a **normal** release (STABLE) or a **pre‑release** (DEBUG);
    never a draft.
 4. Attach the APK, `update.json` and the `.sha256` file from `dist/<channel>/`.
 5. Note the channel and version in the release notes.
+
+Never reuse a tag or a `versionCode`: the preflight in §5 refuses both, and a
+reused code would make two published APKs indistinguishable to the installer.
 
 ## 8. Migration from pre‑channel builds
 
@@ -253,8 +273,8 @@ Consequences, and why the rules in §3/§4 exist:
 * **STABLE releases must never be pre‑releases**, or `/releases/latest` skips
   them.
 * **STABLE version names must never be reused**, because the installer rejects a
-  build that is not at least equal by `versionCode` in the same‑channel case and
-  there is otherwise no way to distinguish two builds named `2.0.2`.
+  build that does not have a strictly higher `versionCode` in the same‑channel
+  case and there is otherwise no way to distinguish two builds named `2.0.2`.
 
 So the first STABLE release under this scheme is the bridge: existing users are
 offered it automatically in‑app (no manual download) and, once installed, run

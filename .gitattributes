@@ -1,0 +1,5 @@
+# Windows batch files must keep CRLF line endings: cmd.exe's `goto`/label
+# scanning computes byte offsets and silently fails ("cannot find the batch
+# label") when the file uses bare LF. Pin them explicitly so a checkout always
+# produces a runnable script regardless of the machine's core.autocrlf setting.
+*.bat text eol=crlf

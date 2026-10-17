@@ -8,7 +8,9 @@ import com.vega.sting.BuildConfig
  * The channel determines which GitHub releases the updater looks at. It does
  * NOT override Android's package-signature or version-code rules -- the
  * selected APK must still carry the same package id, the same signing
- * certificate and a non-decreasing version code before it can be installed.
+ * certificate and a **strictly higher** version code before it can be
+ * installed (version codes are globally unique, so an equal code is never a
+ * newer build).
  *
  * @param label the value written into the release `update.json` manifest and
  *   into the APK's `DEFAULT_UPDATE_CHANNEL` manifest meta-data

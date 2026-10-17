@@ -140,6 +140,10 @@ if (-not $keystoreChecked) {
 
 # --- hash + manifest --------------------------------------------------------
 $hash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash.ToLowerInvariant()
+# Authoritative APK size, taken from the verified artifact itself. The updater
+# uses it to size the download and to reject a truncated transfer, so it must
+# describe exactly the bytes that were hashed (not the source build output).
+$apkSize = (Get-Item -LiteralPath $Apk).Length
 
 $distRoot = Join-Path $Root 'dist'
 $targetDir = if ($OutDir) { $OutDir } else { Join-Path $distRoot $channelTag }
@@ -152,6 +156,7 @@ $manifest = [ordered]@{
     versionCode             = $VersionCode
     packageName             = $PackageName
     apkAsset                = $apkName
+    apkSizeBytes            = $apkSize
     sha256                  = $hash
     minSupportedVersionCode = $MinSupportedVersionCode
 }
@@ -173,6 +178,7 @@ $summary = @(
     "Version name:   $apkVersionName"
     "Version code:   $apkCode"
     "APK asset:      $apkName"
+    "APK size:       $apkSize bytes"
     "SHA-256:        $hash"
     "Signer digest:  $signerDigest"
     ""
@@ -204,5 +210,6 @@ Write-Output "apk=$publishedApk"
 Write-Output "manifest=$manifestPath"
 Write-Output "checksum=$checksumPath"
 Write-Output "sha256=$hash"
+Write-Output "apkSizeBytes=$apkSize"
 Write-Output "signer=$signerDigest"
 Write-Output "keystoreChecked=$keystoreChecked"

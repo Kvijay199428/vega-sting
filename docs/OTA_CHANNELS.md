@@ -38,44 +38,52 @@ decides what a user is offered.
 
 ## 3. Version policy
 
-* `next.versionCode` is the `versionCode` for the **next STABLE release**. It is
-  advanced **only after** a stable build succeeds and passes verification.
-* A **DEBUG build reuses the latest STABLE release's `versionCode`**
-  (`next.versionCode - 1`) and does not consume a code of its own. Android
-  refuses a lower `versionCode` but permits an **equal‑code reinstall**, so
-  keeping DEBUG level with STABLE is what lets a device move STABLE ⇄ DEBUG in
-  either direction. (If DEBUG were allowed to run ahead, switching back to
-  STABLE would be a downgrade Android rejects — which is exactly the trap this
-  policy avoids.)
-* Consecutive DEBUG builds therefore share a `versionCode` and are told apart by
-  their `versionName` (`x.y.z-dev.N`); the updater compares version names to
-  order equal codes within a channel.
+* A **single, globally increasing `versionCode`** (`next.versionCode`) is shared
+  by **both** channels. Every release — STABLE or DEBUG — consumes the current
+  value and then advances it, so `versionCode` grows monotonically across the
+  channel switch.
+* This is what keeps an **in‑place install possible in either direction**:
+
+  | Move            | Codes        | Result                         |
+  |-----------------|--------------|--------------------------------|
+  | STABLE → DEBUG  | 17 → 18      | ordinary update                |
+  | DEBUG → STABLE  | 18 → 19      | ordinary update                |
+
+  (If each channel had its own counter, moving DEBUG → STABLE could produce a
+  lower code that Android rejects — forcing an uninstall and data loss.)
+* A channel is identified by the release manifest / build flavor — **never** by
+  the `versionCode`.
+* `next.versionCode` is advanced **only after** a build succeeds and passes
+  verification, and it is advanced by **both** `--stable` and `--dev`.
 * Version names:
   * STABLE: `x.y.z` (plain — no suffix; see §8 for why)
   * DEBUG:  `x.y.z-dev.N`
 * `version.properties` is the single source of truth:
 
 ```properties
-next.versionCode=13            # versionCode for the NEXT stable release
+next.versionCode=18            # versionCode shared by the NEXT release on EITHER channel
 minSupported.versionCode=1     # oldest installed code still eligible for OTA
-release.baseVersion=2.0.1      # versionName of the LAST stable release
-debug.baseVersion=2.0.2
-debug.buildNumber=0
-debug.versionName=2.0.2-dev.1
+release.baseVersion=2.0.5      # versionName of the LAST stable release
+debug.baseVersion=2.0.6
+debug.buildNumber=1
+debug.versionName=2.0.6-dev.1
 ```
 
 Rules applied by `scripts/version.ps1`:
 
-* `--stable` patch‑bumps the last stable version: `2.0.1 → 2.0.2`, and consumes
-  `next.versionCode` (which then advances).
+* `--stable` patch‑bumps the last stable version: `2.0.5 → 2.0.6`, consumes
+  `next.versionCode`, and then advances it.
 * `--stable --minor` / `--major` bumps minor/major instead: `2.1.0` / `3.0.0`.
 * `--stable --respin` is accepted but identical to `--stable` (a patch bump):
   stable names carry no counter, and an already‑installed version can never be
   re‑offered.
-* `--dev` increments the dev counter on the current dev base and reuses the last
-  stable's `versionCode` (the counter does not move).
+* `--dev` increments the dev counter on the current dev base and **also consumes
+  and advances `next.versionCode`**, exactly like a stable build.
 * After a successful `--stable` build the dev base auto‑advances to
   `stableBase + 1 patch` (but never moves backwards).
+* The updater still compares version **names** to order equal codes within a
+  channel during the transition window (§8), but new releases no longer rely on
+  equal codes.
 
 ## 4. Release naming & `update.json`
 
@@ -90,14 +98,20 @@ Rules applied by `scripts/version.ps1`:
 {
   "schemaVersion": 1,
   "channel": "STABLE",
-  "versionName": "2.0.2",
-  "versionCode": 13,
+  "versionName": "2.0.5",
+  "versionCode": 17,
   "packageName": "com.vega.sting",
-  "apkAsset": "vega-sting-stable-2.0.2.apk",
+  "apkAsset": "vega-sting-stable-2.0.5.apk",
+  "apkSizeBytes": 8817143,
   "sha256": "<64 lowercase hex chars>",
   "minSupportedVersionCode": 1
 }
 ```
+
+`apkSizeBytes` is optional: releases published before the field existed simply
+omit it, and the updater falls back to the size GitHub reports for the asset.
+When present it is authoritative — it is computed from the exact bytes that were
+hashed, and a download whose length differs is rejected as truncated.
 
 The updater lists `/releases` (never `/releases/latest`), filters by channel and
 tag prefix, downloads the manifest and selects the **highest compatible
@@ -157,18 +171,56 @@ version name is never touched.
   the preference and immediately checks the chosen channel, **Cancel** leaves the
   previous preference untouched.
 * Switching to a channel whose newest release is older than the installed build
-  still offers that build on a manual check, with an in‑dialog warning that
-  Android may refuse the downgrade. The preference is saved either way. If
-  Android refuses the install, an **install‑not‑completed** dialog explains it on
-  the next launch. If the chosen channel has published nothing yet, a
-  **channel‑ahead** dialog says so instead — it never claims the channel is
-  already installed.
-* Downloads go to app‑private storage and are validated (SHA‑256, package,
-  version, signer) before the system installer is opened. The user must confirm
-  the install; nothing is ever auto‑installed.
+  still offers that build on a manual check, but through the **manual‑downgrade**
+  dialog (§6.1) rather than the ordinary update prompt: Android will refuse an
+  in‑place downgrade. The preference is saved either way. If the chosen channel
+  has published nothing yet, a **channel‑ahead** dialog says so instead — it never
+  claims the channel is already installed.
+* Downloads are streamed to a private staging file, **verified** (size,
+  SHA‑256, package, version, signer — see `ApkValidator`), and only then promoted
+  to the canonical public folder `Download/VEGA-STING/`. A cancelled or invalid
+  download never leaves a partial file behind and never overwrites a previously
+  verified APK. The user must confirm the install in the system installer;
+  nothing is ever auto‑installed.
+* Before a download starts the updater checks free space: it requires
+  `apkSize + max(20 MiB, 10%)`. If that is not available it shows a
+  **not‑enough‑storage** dialog (Try Again / Check for Updates) and does **not**
+  change the channel or the target release. Free space is re‑checked while the
+  transfer runs, so a stream that grows past the estimate cannot fill the volume.
+* A verified APK the user has not installed is **kept**. APKs strictly older than
+  the installed version (i.e. an update that has already been applied) are
+  reconciled away on the next launch. Reconciliation is idempotent and only ever
+  touches files under `Download/VEGA-STING/`; an APK marked "keep" is never
+  deleted.
 * Skipped versions are stored per channel (`ignored_version_STABLE` /
   `ignored_version_DEBUG`), so skipping in one channel cannot hide a release in
   the other.
+* A persistent **DEBUG build** banner is shown on the home screen whenever the
+  *installed* build is a DEBUG prerelease. It is driven by the build's baked‑in
+  channel, **not** by the selected subscription, so switching the subscription to
+  STABLE never hides the fact that a prerelease is running.
+
+### 6.1 Manual downgrade (channel switch to an older build)
+
+When a manual check finds that the selected channel's newest build is **older**
+than the installed one, the ordinary update prompt is replaced by a dedicated
+**manual‑downgrade** dialog, because Android will not replace a newer app with an
+older one in place. The flow is:
+
+1. **Download for Manual Install** — the older APK is downloaded, verified (with
+   the downgrade check relaxed but package/signature/checksum/size still
+   enforced) and saved to `Download/VEGA-STING/`.
+2. A **saved for manual install** dialog explains the next steps: open the folder
+   in a file manager, uninstall VEGA STING, then open the saved APK.
+3. Nothing is uninstalled automatically, and no install is launched — the user
+   performs the uninstall/reinstall deliberately.
+
+> **Data‑preservation limitation.** Recordings live on shared storage
+> (`<storage root>/VEGA STING`) and survive an uninstall. The app database and
+> preferences (settings, timestamp choices, in‑app history) are app‑private and
+> **are removed** by an uninstall. There is currently no export/backup step; the
+> app warns about this rather than silently losing data. A future release may add
+> one (see the follow‑up note at the end of this document).
 
 ## 7. Publishing (manual)
 
@@ -215,3 +267,23 @@ to those older builds by design.
 > Releases published before this scheme carry no `update.json`. The new updater
 > skips them while scanning, but selection still works: it keeps the highest
 > compatible candidate, so one valid STABLE release is enough.
+
+## 9. Known limitations & follow‑ups
+
+* **No recording export/backup.** Because a manual downgrade requires an
+  uninstall, and uninstall removes the app‑private database and preferences,
+  users who downgrade lose in‑app settings/history while their recording files
+  (on shared storage) are kept. The manual‑downgrade dialog warns about this.
+  A future release could add an export/backup step; it is intentionally **not**
+  implemented yet. This is the only follow‑up created by the updater overhaul.
+* **MediaStore retention.** On API 29+ verified APKs are published through
+  `MediaStore.Downloads`. Whether the *system* removes an app's Downloads
+  contributions on uninstall is Android‑version dependent; the APK is written so
+  it is visible in a file manager on all supported versions, and the updater
+  never relies on it being present after an uninstall (the user can re‑download).
+* **Legacy storage path.** On API 26–28 the APK is written directly to
+  `Download/VEGA-STING/` under `WRITE_EXTERNAL_STORAGE` (declared `maxSdkVersion
+  28`); API 29 uses `requestLegacyExternalStorage`; API 30+ relies on the
+  all‑files access the recording feature already requires. This is untested on
+  every OEM/API combination and should be verified on a representative device
+  matrix before a production rollout.

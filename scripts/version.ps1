@@ -85,14 +85,16 @@ function WriteProps([hashtable]$Map) {
         '# Edited automatically by release.bat / debug.bat. Do not hand-edit.'
         '# ============================================================================'
         ''
-        '# versionCode for the NEXT STABLE release. It only moves when a stable'
-        '# build is committed.'
+        '# Globally increasing versionCode shared by BOTH channels.'
+        '#'
+        '# Every release -- STABLE or DEBUG -- consumes the current value and then'
+        '# advances it, so versionCode always grows monotonically across channels.'
+        '# That keeps an in-place install possible in either direction:'
+        '#   STABLE 17 -> DEBUG 18 (ordinary update)'
+        '#   DEBUG 18  -> STABLE 19 (ordinary update)'
+        '# A channel is identified by the release manifest / build flavor, never by'
+        '# the versionCode. It only moves after a verified build is committed.'
         "next.versionCode=$($Map['next.versionCode'])"
-        ''
-        '# A DEBUG build reuses the latest stable release versionCode'
-        '# (next.versionCode - 1) so a device can switch STABLE <-> DEBUG without'
-        '# Android rejecting it as a downgrade. Debug builds are told apart by'
-        '# their versionName (x.y.z-dev.N).'
         ''
         '# Oldest installed versionCode still eligible for OTA updates.'
         "minSupported.versionCode=$($Map['minSupported.versionCode'])"
@@ -157,12 +159,12 @@ switch ($Mode) {
                 $counter = [int]$props['debug.buildNumber'] + 1
             }
             $name = "$base-dev.$counter"
-            # A DEBUG build reuses the versionCode of the latest STABLE release
-            # (next.versionCode - 1) and does NOT advance it. Android permits an
-            # equal-code reinstall but never a lower one, so keeping DEBUG level
-            # with STABLE is what makes STABLE <-> DEBUG switching installable in
-            # both directions. next.versionCode therefore only moves on a stable.
-            $code = [int]$props['next.versionCode'] - 1
+            # OPTION A (globally increasing versionCode): a DEBUG build consumes
+            # the SAME shared counter as STABLE. Both channels advance one
+            # monotonically increasing sequence, so an in-place install is
+            # possible whichever channel the device moves to. Channel identity
+            # comes from the build flavor / release manifest, not the code.
+            $code = [int]$props['next.versionCode']
             if ($code -lt 1) { $code = 1 }
         }
         Write-Output "versionName=$name"
@@ -181,9 +183,10 @@ switch ($Mode) {
             $stableBase = $Matches[1]
             $props['release.baseVersion'] = $stableBase
 
-            # Only a STABLE build consumes/moves next.versionCode. The build may
-            # have run with an injected code; adopt it if it is ahead, then move
-            # past it so the next stable never reuses a code.
+            # Advance the shared, globally increasing versionCode past the code
+            # this build consumed. The build may have run with an injected code;
+            # adopt it if it is ahead, then move past it so the next release on
+            # EITHER channel never reuses a code.
             $code = [int]$props['next.versionCode']
             if ($VersionCode -gt $code) { $code = $VersionCode }
             $props['next.versionCode'] = [string]($code + 1)
@@ -201,12 +204,16 @@ switch ($Mode) {
             if ($VersionName -notmatch '^(\d+\.\d+\.\d+)-dev\.(\d+)$') {
                 Fail "Dev version name '$VersionName' does not match x.y.z-dev.N."
             }
-            # A DEBUG build does NOT consume a version code: it reuses the last
-            # stable's code so channel switches stay installable. Advancing the
-            # dev counter is enough to distinguish consecutive debug builds.
             $props['debug.baseVersion'] = $Matches[1]
             $props['debug.buildNumber'] = $Matches[2]
             $props['debug.versionName'] = $VersionName
+
+            # OPTION A: a DEBUG release also consumes the shared versionCode, so
+            # advance the same counter STABLE uses. Adopt an injected code that
+            # is ahead, then move past it.
+            $code = [int]$props['next.versionCode']
+            if ($VersionCode -gt $code) { $code = $VersionCode }
+            $props['next.versionCode'] = [string]($code + 1)
         }
 
         WriteProps $props

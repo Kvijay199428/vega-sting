@@ -70,6 +70,13 @@ automatically lawful in every case — see
 
 - **Audio and video recording** via Camera2 and `MediaRecorder`, with
   hardware-adaptive sizing, codecs and frame rates.
+- **Dual-camera composite capture** (where the device supports it): front
+  and rear cameras recorded simultaneously into one file, with a live
+  orientation-aware composite preview, selectable layout/placement, split
+  ratios (40:60 / 50:50 / 60:40), quality and FPS filtering, front-camera
+  mirroring and crop-to-fit / letterbox scaling. Settings show a live
+  `CAPABILITY [ SUPPORTED ]` probe, and the dual-camera master toggle
+  gates every dependent option.
 - **Foreground recording** that keeps camera and microphone running even
   with the screen off.
 - **Quick Settings tile** and a **home-screen widget** and app
@@ -80,19 +87,14 @@ automatically lawful in every case — see
   checks and a clear/free indicator.
 - **Trash with a 30-day retention** sweep, restore, empty and permanent
   delete.
-- **Signature / watermark overlay** (timestamp, position, text size) on
-  new recordings.
+- **Signature / watermark overlay** (timestamp, signature, watermark,
+  position, format and text size) on new recordings — with a master
+  toggle that gates the whole group.
 - **Playback, sharing and deletion** of recordings, all on-device.
 - **No account, no ads, no analytics** — recordings never leave the
   device unless *you* share them.
 - **OTA updates** from GitHub Releases, checked on a schedule or from
   Settings → About.
-
-### Not currently available
-
-- **Dual-camera (front + back) composite capture** is described in the
-  design history but is **not** implemented in this build. It is a
-  hardware-dependent future capability.
 
 ---
 
@@ -144,9 +146,14 @@ them. Select items to **Restore** them to the library or **Delete** them
 immediately.
 
 **Settings** (`Setup` tab) groups hardware and storage choices —
-RECORDING (video size/ratio/codec, orientation), OVERLAY (signature /
-watermark), STORAGE (directory, SD/OTG), TRASH, HARDWARE, plus
-**Legal** and **About**. Under **About** → **Check For Updates** forces an
+RECORDING (video size/ratio/codec, orientation), FILE SIZE & STORAGE
+SAFETY (splitting, file limits, free-space reserve), OVERLAY (watermark,
+timestamp, signature), STORAGE (directory, SD/OTG), TRASH, DUAL CAMERA
+(layout, placement, split ratio, quality, FPS, mirroring, scaling —
+shown when the hardware supports it), HARDWARE, REMINDERS, plus **Legal**
+and **About**. Every multi-option row opens the same selection dialog;
+simple enable/disable rows flip on tap, and master toggles grey out the
+rows they control. Under **About** → **Check For Updates** forces an
 unthrottled update check, and shows the version, build and developer.
 
 ---
@@ -174,17 +181,21 @@ unthrottled update check, and shows the version, build and developer.
 
 ### Screenshots
 
-| Home | Recording | Selection |
-|:---:|:---:|:---:|
-| <img src="docs/screenshots/02-home.png" width="240" alt="Home screen"> | <img src="docs/screenshots/03-recording.png" width="240" alt="Recording"> | <img src="docs/screenshots/04-selection.png" width="240" alt="Selection mode"> |
-
-| Consent | Trash | Trash selection | Settings |
+| Consent | Home | Recording | Selection |
 |:---:|:---:|:---:|:---:|
-| <img src="docs/screenshots/01-consent.png" width="240" alt="Consent screen"> | <img src="docs/screenshots/05-trash.png" width="240" alt="Trash"> | <img src="docs/screenshots/06-trash-selection.png" width="240" alt="Trash selection"> | <img src="docs/screenshots/07-settings.png" width="240" alt="Settings"> |
+| <img src="docs/screenshots/01-consent.png" width="220" alt="Consent screen"> | <img src="docs/screenshots/02-home.png" width="220" alt="Home screen"> | <img src="docs/screenshots/03-recording.png" width="220" alt="Recording in progress"> | <img src="docs/screenshots/04-selection.png" width="220" alt="Selection mode"> |
+
+| Trash | Trash selection | Settings | Selection dialog |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/05-trash.png" width="220" alt="Trash"> | <img src="docs/screenshots/06-trash-selection.png" width="220" alt="Trash selection"> | <img src="docs/screenshots/07-settings.png" width="220" alt="Settings"> | <img src="docs/screenshots/08-dialog.png" width="220" alt="Settings selection dialog"> |
+
+| Dual camera | Overlay | Overlay gating | About / developer |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/09-dual-camera.png" width="220" alt="Dual-camera settings"> | <img src="docs/screenshots/11-overlay.png" width="220" alt="Overlay settings"> | <img src="docs/screenshots/12-overlay-gated.png" width="220" alt="Overlay settings gated by the watermark toggle"> | <img src="docs/screenshots/10-about-developer.png" width="220" alt="About and developer"> |
 
 | Home-screen widget |
 |:---:|
-| <img src="docs/screenshots/08-widget.png" width="320" alt="VEGA STING home-screen widget"> |
+| <img src="docs/screenshots/13-widget.png" width="320" alt="VEGA STING home-screen widget"> |
 
 ---
 
@@ -228,7 +239,7 @@ advice.
 # Development
 
 Screen-recording terminal for Android. Black / orange / monospace UI,
-built with Kotlin, Jetpack Compose and CameraX.
+built with Kotlin, Jetpack Compose and Camera2.
 
 ## Project layout
 
@@ -239,9 +250,10 @@ built with Kotlin, Jetpack Compose and CameraX.
 | `app/src/main/kotlin/com/vega/sting/database/` | Room database for recordings, metadata and trash |
 | `app/src/main/kotlin/com/vega/sting/storage/` | Storage backends (internal, SD card, OTG) and health checks |
 | `app/src/main/kotlin/com/vega/sting/settings/SettingsManager.kt` | DataStore-backed preferences |
+| `app/src/main/kotlin/com/vega/sting/camera/` | Dual-camera pipeline: Camera2 controllers, shared GL compositor, orientation handling |
+| `app/src/main/kotlin/com/vega/sting/ui/settings/` | Settings screen, shared selection dialog, dual-camera section |
 | `app/src/main/kotlin/com/vega/sting/legal/` | Consent model, versioned DataStore persistence, bundled document metadata |
 | `app/src/main/kotlin/com/vega/sting/ui/legal/` | First-run consent gate and offline document reader |
-| `app/src/main/kotlin/com/vega/sting/ui/settings/SettingsScreen.kt` | Settings screen |
 | `app/src/main/kotlin/com/vega/sting/ui/update/` | OTA dialogs and the update state host |
 | `app/src/main/kotlin/com/vega/sting/updater/` | GitHub release check, APK download, installer handoff |
 | `app/src/test/kotlin/com/vega/sting/legal/` | Consent completeness and version-regression tests |
